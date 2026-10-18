@@ -152,6 +152,40 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
+@handler.add(MessageEvent, message=TextMessage)
+def handle_text_message(event):
+    user_message = event.message.text.strip()
+    user_id = event.source.user_id
+    date_str = get_thai_time(event.timestamp)
+    
+    try:
+        profile = line_bot_api.get_profile(user_id)
+        user_name = profile.display_name
+    except Exception:
+        user_name = "สมาชิกในครอบครัว"
+
+    # เช็คคำทักทายหรือขอให้แนะนำตัว
+    if any(keyword in user_message.lower() for keyword in ["สวัสดี", "แนะนำตัว", "สวัสดีครับ", "สวัสดีค่ะ", "แนะนำตัวหน่อย"]):
+        intro_text = (
+            f"สวัสดีครับคุณ {user_name} และทุกคนในครอบครัวตั้งทอง! 🏡✨\n"
+            "ผมคือ **Family Life & Care OS** ผู้ช่วยอัจฉริยะประจำบ้านครับ\n\n"
+            "สิ่งที่ผมช่วยได้:\n"
+            "📸 ส่งรูปภาพเข้ามาในกลุ่ม (อาหาร, ที่พัก, ท่องเที่ยว) ผมจะช่วยดูและบันทึกลง Google Sheets ให้อัตโนมัติ\n"
+            "🔍 พิมพ์ถามค้นหาภาพได้ เช่น 'ขอดูรูปอาหารมื้อล่าสุด' หรือ 'ขอดูรูปที่พัก'\n"
+            "📝 พิมพ์บันทึกข้อมูลทั่วไปหรือสรุปเรื่องราวของครอบครัวได้เลยครับ!"
+        )
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=intro_text)
+        )
+        return
+
+    try:
+        sheet = get_sheet()
+        records = sheet.get_all_values()
+    except Exception as e:
+        records = []
+        print(f"Error loading sheet: {e}")
     user_message = event.message.text.strip()
     user_id = event.source.user_id
     date_str = get_thai_time(event.timestamp)
