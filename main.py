@@ -248,6 +248,10 @@ def save_to_google_sheets(date_time, name, category, location_or_shop, detail, a
     except Exception as e:
         print(f"Error saving to Google Sheets: {e}")
 
+        # กำหนดความสูงแถวล่าสุดให้เป็น 120px ทันทีหลังจาก append_row
+row_index = len(sheet.get_all_values())
+sheet.format(f"A{row_index}:H{row_index}", {"pixelSize": 120})
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
