@@ -56,7 +56,7 @@ def get_sheet():
 
 def get_thai_time(timestamp_ms):
     tz = pytz.timezone('Asia/Bangkok')
-    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz) 
+    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz)
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 def analyze_image_with_gemini(image_path):
@@ -160,8 +160,17 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
-    user_message = event.message.text.strip()
     user_id = event.source.user_id
+    user_message = event.message.text.strip()
+    
+    # ดักจับคำสั่งขอ User ID ไว้บรรทัดแรกสุด เพื่อให้ตอบกลับทันที
+    if any(keyword in user_message.lower() for keyword in ["my id", "userid", "user id", "ขอไอดี"]):
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"LINE User ID ของคุณคือ:\n{user_id}")
+        )
+        return
+
     date_str = get_thai_time(event.timestamp)
     
     try:
@@ -169,14 +178,6 @@ def handle_text_message(event):
         user_name = profile.display_name
     except Exception:
         user_name = "สมาชิกในครอบครัว"
-
-    # เช็คคำขอ User ID ของผู้ใช้
-    if any(keyword in user_message.lower() for keyword in ["my id", "userid", "user id", "ขอไอดี"]):
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=f"LINE User ID ของคุณคือ:\n{user_id}")
-        )
-        return
 
     # เช็คคำทักทายหรือขอให้แนะนำตัว
     if any(keyword in user_message.lower() for keyword in ["สวัสดี", "แนะนำตัว", "สวัสดีครับ", "สวัสดีค่ะ", "แนะนำตัวหน่อย"]):
@@ -267,24 +268,6 @@ def handle_image_message(event):
 
     # บันทึกลง Google Sheets แบบเงียบๆ
     save_to_google_sheets(date_str, user_name, category, location, detail, image_url)
-
-    # (ตัวเลือกเสริม) ถ้าต้องการให้ส่งแจ้งเตือนเข้าแชทส่วนตัวของคุณ
-    # ให้เอาคอมเมนต์ออก แล้วนำ User ID ของคุณมาใส่แทนที่ "YOUR_ADMIN_USER_ID"
-    """
-    try:
-        admin_user_id = "YOUR_ADMIN_USER_ID"
-        notification_text = (
-            f"📥 [ระบบหลังบ้านบันทึกภาพ]\n"
-            f"👤 ผู้ส่ง: {user_name}\n"
-            f"📂 หมวดหมู่: {category}\n"
-            f"📍 สถานที่: {location}\n"
-            f"📝 รายละเอียด: {detail}\n"
-            f"🔗 ลิงก์รูป: {image_url}"
-        )
-        line_bot_api.push_message(admin_user_id, TextSendMessage(text=notification_text))
-    except Exception as e:
-        print(f"Error sending push notification: {e}")
-    """
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
