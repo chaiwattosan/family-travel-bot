@@ -4,6 +4,8 @@ import gspread
 import cloudinary
 import cloudinary.uploader
 from datetime import datetime, timezone, timedelta
+from google import genai
+from google.genai import types
 from google.oauth2.service_account import Credentials
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -17,13 +19,18 @@ app = Flask(__name__)
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
+# ตั้งค่า Cloudinary
 cloudinary.config(
     cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
     api_key=os.environ.get('CLOUDINARY_API_KEY'),
     api_secret=os.environ.get('CLOUDINARY_API_SECRET'),
     secure=True
 )
+
+# ตั้งค่า Gemini Client
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -34,7 +41,7 @@ SCOPES = [
 ]
 
 def get_thai_time(timestamp_ms):
-    """แปลง Unix timestamp (ms) จาก LINE ให้เป็นเวลาไทย YYYY-MM-DD HH:MM:SS"""
+    """แปลง Unix timestamp (ms) จาก LINE เป็นเวลาไทย YYYY-MM-DD HH:MM:SS"""
     utc_dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
     thai_dt = utc_dt + timedelta(hours=7)
     return thai_dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -49,6 +56,45 @@ def get_sheet():
     creds = get_google_credentials()
     client = gspread.authorize(creds)
     return client.open("Family Travel & Meal Log (OS)").sheet1
+
+def ask_gemini_agent(user_message, sheet_data):
+    """ใช้ Gemini วิเคราะห์เจตนาผู้ใช้และค้นหาข้อมูลจาก Sheet"""
+    if not gemini_client:
+        return {"action": "SAVE"}
+
+    prompt = f"""
+คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot)
+หน้าที่ของคุณคือวิเคราะห์ข้อความของผู้ใช้ โดยอ้างอิงจากข้อมูลใน Google Sheet ที่แนบมานี้
+
+ข้อมูลใน Google Sheet (เรียงตามลำดับแถว):
+{json.dumps(sheet_data, ensure_ascii=False, indent=2)}
+
+ข้อความจากผู้ใช้: "{user_message}"
+
+ให้ตอบกลับในรูปแบบ JSON Object เท่านั้น โดยมีโครงสร้างดังนี้:
+{{
+  "action": "FIND_IMAGE" หรือ "SUMMARIZE" หรือ "SAVE",
+  "image_url": "URL รูปภาพจากตารางที่ตรงกับสิ่งที่ผู้ใช้หามากที่สุด (ใช้เมื่อ action เป็น FIND_IMAGE เท่านั้น หากไม่พบให้ใส่ null)",
+  "text_reply": "ข้อความตอบกลับผู้ใช้อย่างสุภาพ กระชับ และเป็นธรรมชาติ"
+}}
+
+แนวทางการตัดสินใจ:
+1. หากผู้ใช้ต้องการดูรูปภาพ, ค้นหารูปภาพ, รูปอาหาร, รูปเที่ยว ให้เลือก action: "FIND_IMAGE" และเลือก image_url จากคอลัมน์ H ที่สอดคล้องที่สุด
+2. หากผู้ใช้ต้องการให้สรุป, สรุปกิจกรรม, สรุปรายวัน/รายสัปดาห์ หรือถามข้อมูลทั่วไป ให้เลือก action: "SUMMARIZE" และเขียนสรุปใน text_reply
+3. หากผู้ใช้พิมพ์ข้อความเล่าเรื่อง, จดบันทึกทั่วไป, ไม่ได้ถามหรือขออะไร ให้เลือก action: "SAVE"
+"""
+    try:
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Error querying Gemini: {e}")
+        return {"action": "SAVE"}
 
 @app.route("/", methods=['GET'])
 def index():
@@ -78,45 +124,46 @@ def handle_text_message(event):
     except Exception:
         user_name = "สมาชิกในครอบครัว"
 
-    # โหมดคำสั่ง: ขอดูรูปภาพล่าสุด
-    if user_message in ["ขอดูรูป", "ขอดูรูปล่าสุด", "รูปภาพล่าสุด", "รูป"]:
-        try:
-            sheet = get_sheet()
-            records = sheet.get_all_values()
-            
-            # วนลูปหาแถวล่าสุดที่มี URL รูปภาพในคอลัมน์ H (index 7)
-            found_url = None
-            found_desc = None
-            for row in reversed(records):
-                if len(row) >= 8 and row[7].startswith("https://res.cloudinary.com"):
-                    found_url = row[7]
-                    found_desc = f"{row[0]} โดย {row[1]}"
-                    break
-            
-            if found_url:
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    [
-                        TextSendMessage(text=f"ส่งรูปภาพล่าสุดให้แล้วครับ ({found_desc})"),
-                        ImageSendMessage(original_content_url=found_url, preview_image_url=found_url)
-                    ]
-                )
-                return
-            else:
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    TextSendMessage(text="ยังไม่พบรูปภาพที่บันทึกไว้ในระบบครับ")
-                )
-                return
-        except Exception as e:
-            print(f"Error fetching image: {e}")
+    # ดึงข้อมูลจากชีทเพื่อให้ AI ใช้วิเคราะห์
+    try:
+        sheet = get_sheet()
+        records = sheet.get_all_values()
+    except Exception as e:
+        records = []
+        print(f"Error loading sheet: {e}")
+
+    # ส่งให้ Gemini วิเคราะห์
+    analysis = ask_gemini_agent(user_message, records)
+    action = analysis.get("action", "SAVE")
+
+    if action == "FIND_IMAGE":
+        found_url = analysis.get("image_url")
+        reply_txt = analysis.get("text_reply", "ส่งรูปภาพให้แล้วครับ")
+        if found_url and found_url.startswith("https://res.cloudinary.com"):
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="เกิดข้อผิดพลาดในการดึงรูปภาพครับ")
+                [
+                    TextSendMessage(text=reply_txt),
+                    ImageSendMessage(original_content_url=found_url, preview_image_url=found_url)
+                ]
+            )
+            return
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="ไม่พบรูปภาพที่ตรงกับที่ค้นหาในระบบครับ")
             )
             return
 
-    # บันทึกข้อความทั่วไป
+    elif action == "SUMMARIZE":
+        reply_txt = analysis.get("text_reply", "ไม่มีข้อมูลสำหรับสรุปครับ")
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply_txt)
+        )
+        return
+
+    # กรณีเป็นข้อความบันทึกทั่วไป (action == "SAVE")
     save_to_google_sheets(
         date_time=date_str,
         name=user_name,
