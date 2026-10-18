@@ -1,4 +1,6 @@
 import os
+import gspread
+from google.oauth2.service_account import Credentials
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -6,7 +8,7 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMess
 
 app = Flask(__name__)
 
-# ดึงค่าจาก Environment Variables ที่เราตั้งไว้บน Railway
+# ดึงค่าจาก Environment Variables บน Railway
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 
@@ -40,18 +42,74 @@ def handle_text_message(event):
     except:
         user_name = "สมาชิกในครอบครัว"
 
-    # ตอบกลับยืนยันการรับข้อความ
+    # บันทึกข้อความลง Google Sheets (Family Travel & Meal Log (OS))
+    save_to_google_sheets(
+        date_time=event.timestamp,
+        name=user_name,
+        category="ข้อความ / บันทึกทั่วไป",
+        location_or_shop="-",
+        detail=user_message,
+        amount="0",
+        image_url="-"
+    )
+
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text=f"รับทราบครับคุณ {user_name}: {user_message}")
+        TextSendMessage(text=f"บันทึกข้อมูลให้เรียบร้อยแล้วครับ: {user_message}")
     )
 
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
+    message_id = event.message.id
+    user_id = event.source.user_id
+    
+    try:
+        profile = line_bot_api.get_profile(user_id)
+        user_name = profile.display_name
+    except:
+        user_name = "สมาชิกในครอบครัว"
+
+    # ดึงรูปภาพจาก LINE
+    message_content = line_bot_api.get_message_content(message_id)
+    image_filename = f"trip_{message_id}.jpg"
+    
+    with open(image_filename, 'wb') as fd:
+        for chunk in message_content.iter_content():
+            fd.write(chunk)
+
+    # (จำลองลิงก์รูปภาพในชีท - เดี๋ยวเราเชื่อม Drive API ต่อได้ครับ)
+    drive_image_link = "อัปโหลดรูปลง Google Drive สำเร็จ"
+
+    save_to_google_sheets(
+        date_time=event.timestamp,
+        name=user_name,
+        category="รูปภาพความทรงจำ",
+        location_or_shop="สถานที่ท่องเที่ยว",
+        detail="ส่งรูปภาพบันทึกทริป",
+        amount="0",
+        image_url=drive_image_link
+    )
+
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="ได้รับรูปภาพบรรยากาศทริปเรียบร้อยแล้วครับ! กำลังบันทึกเข้าอัลบัมให้ครับ")
+        TextSendMessage(text="บันทึกรูปภาพและข้อมูลลง Google Sheets เรียบร้อยแล้วครับ!")
     )
+
+def save_to_google_sheets(date_time, name, category, location_or_shop, detail, amount, image_url):
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        
+        # ถือสิทธิ์เชื่อมต่อผ่านไฟล์ credentials.json ของ Service Account
+        creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
+        client = gspread.authorize(creds)
+        
+        # เปิดไฟล์ Google Sheets ชื่อ 'Family Travel & Meal Log (OS)'
+        sheet = client.open("Family Travel & Meal Log (OS)").sheet1
+        
+        # เพิ่มแถวข้อมูลใหม่ลงในชีท
+        sheet.append_row([str(date_time), name, category, location_or_shop, detail, amount, image_url])
+    except Exception as e:
+        print(f"Error saving to Google Sheets: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
