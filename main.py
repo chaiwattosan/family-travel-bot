@@ -19,6 +19,9 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
+# LINE User ID ของคุณสำหรับรับการแจ้งเตือนส่วนตัว
+ADMIN_USER_ID = "U4408dd0ab71b56db6074273eb28651b0"
+
 cloudinary.config(
     cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
     api_key=os.environ.get('CLOUDINARY_API_KEY'),
@@ -135,8 +138,26 @@ def save_to_google_sheets(date_str, user_name, category, location, detail, image
         row = [date_str, user_name, category, location, detail, "", preview_formula, image_url]
         sheet.append_row(row)
         print("Successfully saved to Google Sheets!")
+
+        # ส่ง Push Notification แจ้งเตือนแอดมินส่วนตัวทันที
+        if ADMIN_USER_ID:
+            notification_text = (
+                f"🚨 **แจ้งเตือนการบันทึกภาพใหม่**\n\n"
+                f"👤 ผู้บันทึก: {user_name}\n"
+                f"📂 หมวดหมู่: {category}\n"
+                f"📍 สถานที่: {location}\n"
+                f"📝 รายละเอียด: {detail}\n"
+                f"⏰ เวลา: {date_str}"
+            )
+            line_bot_api.push_message(
+                ADMIN_USER_ID,
+                [
+                    TextSendMessage(text=notification_text),
+                    ImageSendMessage(original_content_url=image_url, preview_image_url=image_url)
+                ]
+            )
     except Exception as e:
-        print(f"Error saving to Google Sheets: {e}")
+        print(f"Error saving to Google Sheets or sending notification: {e}")
 
 @app.route("/")
 def index():
@@ -154,18 +175,9 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
-    user_id = event.source.user_id
-    print(f"========== MY USER ID IS: {user_id} ==========")
-    
     user_message = event.message.text.strip()
-    date_str = get_thai_time(event.timestamp)
     
-    try:
-        profile = line_bot_api.get_profile(user_id)
-        user_name = profile.display_name
-    except Exception:
-        user_name = "สมาชิกในครอบครัว"
-
+    # หากมีการค้นหาภาพหรือสรุปผ่านแชท ให้บอตตอบกลับเฉพาะกิจตามคำสั่ง
     try:
         sheet = get_sheet()
         records = sheet.get_all_values()
@@ -209,8 +221,6 @@ def handle_text_message(event):
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
     user_id = event.source.user_id
-    print(f"========== MY USER ID IS: {user_id} ==========")
-    
     date_str = get_thai_time(event.timestamp)
     
     try:
@@ -232,11 +242,13 @@ def handle_image_message(event):
         print(f"Cloudinary upload error: {e}")
         return
 
+    # ให้ Gemini วิเคราะห์รูปภาพ
     analysis = analyze_image_with_gemini(image_path)
     category = analysis.get("category", "รูปภาพความทรงจำ")
     location = analysis.get("location", "-")
     detail = analysis.get("detail", "บันทึกภาพถ่ายครอบครัว")
 
+    # บันทึกลง Google Sheets และส่งแจ้งเตือนส่วนตัวหาแอดมิน
     save_to_google_sheets(date_str, user_name, category, location, detail, image_url)
 
 if __name__ == "__main__":
