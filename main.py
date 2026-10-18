@@ -21,7 +21,7 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
-# ตั้งค่า Cloudinary
+# 1. ตั้งค่า Cloudinary
 cloudinary.config(
     cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
     api_key=os.environ.get('CLOUDINARY_API_KEY'),
@@ -29,9 +29,10 @@ cloudinary.config(
     secure=True
 )
 
-# ตั้งค่า Gemini Client
+# 2. ตั้งค่า Gemini Client
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
+# 3. ตั้งค่า LINE Bot
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
@@ -41,7 +42,7 @@ SCOPES = [
 ]
 
 def get_thai_time(timestamp_ms):
-    """แปลง Unix timestamp (ms) จาก LINE เป็นเวลาไทย YYYY-MM-DD HH:MM:SS"""
+    """แปลง Unix timestamp (ms) จาก LINE ให้เป็นเวลาไทย YYYY-MM-DD HH:MM:SS"""
     utc_dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
     thai_dt = utc_dt + timedelta(hours=7)
     return thai_dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -58,17 +59,17 @@ def get_sheet():
     return client.open("Family Travel & Meal Log (OS)").sheet1
 
 def analyze_image_with_gemini(image_path):
-    """ส่งรูปภาพเป็น Bytes ให้ Gemini 2.5 Flash ช่วยดูและสร้างคำบรรยายอัตโนมัติ"""
+    """ส่งรูปภาพให้ Gemini ช่วยดูและระบุหมวดหมู่/คำอธิบายภาษาไทยอัตโนมัติ"""
     if not gemini_client:
         return {"category": "รูปภาพความทรงจำ", "location": "-", "detail": "ส่งรูปภาพบันทึกทริป"}
 
     prompt = (
-        "คุณคือ AI ผู้ช่วยบันทึกข้อมูลภาพถ่ายของครอบครัว ช่วยดูรูปภาพนี้ "
-        "แล้วตอบกลับเป็น JSON Object เท่านั้น:\n"
+        "คุณคือ AI บันทึกข้อมูลภาพถ่ายของครอบครัว ช่วยวิเคราะห์รูปภาพนี้ "
+        "แล้วตอบเป็น JSON Object เท่านั้น:\n"
         "{\n"
-        '  "category": "หมวดหมู่หลัก เช่น อาหาร, ที่พัก, สถานที่ท่องเที่ยว, ครอบครัว, ซื้อของ",\n'
-        '  "location": "สถานที่หรือร้าน/ที่พักที่ปรากฏในรูป (ถ้าไม่ระบุให้ใส่ \'-\')",\n'
-        '  "detail": "คำอธิบายสิ่งที่เห็นในรูปสั้นๆ 1 ประโยค เช่น ทานส้มตำ ไก่ย่าง หรือ ห้องนอนเตียงคู่ หรือ ถ่ายรูปกับป้ายสถานที่"\n'
+        '  "category": "หมวดหมู่หลัก เช่น อาหาร, ที่พัก, สถานที่ท่องเที่ยว, ครอบครัว, สัตว์เลี้ยง, ช้อปปิ้ง",\n'
+        '  "location": "สถานที่หรือประเภทร้าน/ที่พัก (ถ้าไม่ทราบให้ใส่ \'-\')",\n'
+        '  "detail": "คำอธิบายสิ่งที่เห็นในรูปสั้นๆ 1 ประโยค เช่น ทานสำรับอาหารพื้นบ้าน หรือ ห้องนอนเตียงคู่ หรือ ถ่ายรูปกับป้ายสถานที่"\n'
         "}"
     )
     try:
@@ -78,8 +79,8 @@ def analyze_image_with_gemini(image_path):
         response = gemini_client.models.generate_content(
             model='gemini-3.5-flash-lite',
             contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                prompt
+                prompt,
+                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
             ],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -91,33 +92,34 @@ def analyze_image_with_gemini(image_path):
         return {"category": "รูปภาพความทรงจำ", "location": "-", "detail": "ส่งรูปภาพบันทึกทริป"}
 
 def ask_gemini_agent(user_message, sheet_data):
-    """ใช้ Gemini วิเคราะห์เจตนาผู้ใช้และค้นหาข้อมูลจาก Sheet"""
+    """ใช้ Gemini วิเคราะห์เจตนาผู้ใช้และค้นหาข้อมูลจาก Sheet โดยห้ามเดาข้อมูลมั่วเด็ดขาด"""
     if not gemini_client:
-        # Fallback กฎพื้นฐานถ้าไม่มี AI Key
-        if any(w in user_message for w in ["รูป", "ภาพ"]):
-            return {"action": "FIND_IMAGE", "image_url": None, "text_reply": "ค้นหารูปภาพ"}
         return {"action": "SAVE"}
 
     prompt = f"""
 คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot)
-หน้าที่ของคุณคือวิเคราะห์ข้อความของผู้ใช้ โดยอ้างอิงจากข้อมูลใน Google Sheet ที่แนบมานี้
+หน้าที่ของคุณคือตรวจสอบข้อความของผู้ใช้ โดยอ้างอิงจากข้อมูลใน Google Sheet ที่ให้ไว้อย่างเคร่งครัด
 
 ข้อมูลใน Google Sheet (เรียงตามลำดับแถว):
 {json.dumps(sheet_data, ensure_ascii=False, indent=2)}
 
 ข้อความจากผู้ใช้: "{user_message}"
 
-ให้ตอบกลับในรูปแบบ JSON Object เท่านั้น โดยมีโครงสร้างดังนี้:
+กฎเหล็ก (Strict Rules - ห้ามฝ่าฝืน):
+1. ห้ามเดาหรือจินตนาการข้อมูลที่ไม่มีอยู่จริงในตารางเด็ดขาด
+2. หากผู้ใช้ต้องการค้นหารูปภาพ (action: "FIND_IMAGE"):
+   - ให้ตรวจคอลัมน์ category (index 2), detail (index 4) หรือ วันเวลา (index 0) ว่ามีแถวไหนตรงกับสิ่งที่ผู้ใช้ขอหรือไม่
+   - หากพบรูปที่ตรงจริง ๆ ให้ใส่ URL รูปภาพจากคอลัมน์ H (index 7) ลงใน "image_url"
+   - หากในตาราง "ไม่มี" รูปที่ตรงกับหมวดหมู่หรือคำขอ ให้กำหนด "image_url": null และพิมพ์บอกใน "text_reply" ว่าไม่พบ เช่น "ไม่พบรูปภาพเกี่ยวกับ [สิ่งที่หา] ในระบบครับ" ห้ามนำรูปอื่นที่ไม่ตรงมาใส่เด็ดขาด
+3. หากผู้ใช้ขอให้สรุป (action: "SUMMARIZE"): สรุปเฉพาะกิจกรรมที่มีบันทึกไว้ในตารางเท่านั้น ห้ามแต่งเติม
+4. หากเป็นการพูดคุย เล่าเรื่อง หรือแจ้งข้อความเพื่อบันทึกทั่วไป ให้เลือก action: "SAVE"
+
+ตอบกลับเป็น JSON Object เท่านั้น:
 {{
   "action": "FIND_IMAGE" หรือ "SUMMARIZE" หรือ "SAVE",
-  "image_url": "URL รูปภาพจากตารางคอลัมน์ H (index 7) ที่ตรงกับสิ่งที่ผู้ใช้หามากที่สุด (ถ้าไม่พบให้ใส่ null)",
-  "text_reply": "ข้อความตอบกลับผู้ใช้อย่างสุภาพ กระชับ และเป็นธรรมชาติ"
+  "image_url": "URL หรือ null",
+  "text_reply": "ข้อความตอบกลับผู้ใช้อย่างสุภาพ กระชับ"
 }}
-
-แนวทางการตัดสินใจ:
-1. หากผู้ใช้ต้องการดูรูปภาพ, ค้นหารูปภาพ เช่น "ขอดูรูปอาหารล่าสุด", "ขอรูปที่พัก", "รูปเที่ยว", "ขอดูรูป" ให้เลือก action: "FIND_IMAGE" และดึง image_url จากคอลัมน์ H ของแถวที่ตรงกับคำขอที่สุด (ดูจากคอลัมน์ category หรือ detail หรือวันเวลา)
-2. หากผู้ใช้ต้องการให้สรุป, สรุปกิจกรรม, สรุปรายวัน หรือถามยอดเงิน ให้เลือก action: "SUMMARIZE" และเขียนสรุปใน text_reply
-3. หากผู้ใช้พิมพ์บอกเล่าทั่วไป ไม่ได้มีคำสั่งค้นหาหรือขอดูอะไร ให้เลือก action: "SAVE"
 """
     try:
         response = gemini_client.models.generate_content(
@@ -130,9 +132,6 @@ def ask_gemini_agent(user_message, sheet_data):
         return json.loads(response.text)
     except Exception as e:
         print(f"Error querying Gemini: {e}")
-        # กรณี AI มีปัญหา ให้ fallback ตรวจหาคำว่ารูปเพื่อดึงภาพล่าสุด
-        if any(w in user_message for w in ["รูป", "ภาพ"]):
-            return {"action": "FIND_IMAGE", "image_url": None, "text_reply": "ส่งรูปภาพให้แล้วครับ"}
         return {"action": "SAVE"}
 
 @app.route("/", methods=['GET'])
@@ -170,21 +169,16 @@ def handle_text_message(event):
         records = []
         print(f"Error loading sheet: {e}")
 
+    # ส่งให้ Gemini วิเคราะห์
     analysis = ask_gemini_agent(user_message, records)
     action = analysis.get("action", "SAVE")
 
     if action == "FIND_IMAGE":
         found_url = analysis.get("image_url")
-        reply_txt = analysis.get("text_reply", "ส่งรูปภาพให้แล้วครับ")
-        
-        # ถ้าระบบไม่ได้ URL เจาะจงมา ให้ดึงรูปที่มี URL แถวล่าสุดเป็นตัวสำรอง
-        if not found_url and records:
-            for row in reversed(records):
-                if len(row) >= 8 and row[7].startswith("https://res.cloudinary.com"):
-                    found_url = row[7]
-                    break
+        reply_txt = analysis.get("text_reply", "ไม่พบรูปภาพที่ค้นหาครับ")
 
-        if found_url and found_url.startswith("https://res.cloudinary.com"):
+        # ตรวจสอบว่าได้ URL รูปจริงที่ตรงเงื่อนไข ไม่มีการสุ่มเดาดึงภาพอื่นมาแทน
+        if found_url and str(found_url).startswith("https://res.cloudinary.com"):
             line_bot_api.reply_message(
                 event.reply_token,
                 [
@@ -196,7 +190,7 @@ def handle_text_message(event):
         else:
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="ไม่พบรูปภาพที่ตรงกับที่ค้นหาในระบบครับ")
+                TextSendMessage(text=reply_txt if reply_txt else "ไม่พบรูปภาพตามที่ระบุในบันทึกครับ")
             )
             return
 
@@ -208,7 +202,7 @@ def handle_text_message(event):
         )
         return
 
-    # กรณีบันทึกข้อความทั่วไป (SAVE)
+    # กรณีบันทึกข้อความทั่วไป (action == "SAVE")
     save_to_google_sheets(
         date_time=date_str,
         name=user_name,
