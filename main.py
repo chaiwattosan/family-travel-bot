@@ -1,5 +1,5 @@
 import os
-import time
+import json
 import gspread
 from google.oauth2.service_account import Credentials
 from flask import Flask, request, abort
@@ -9,7 +9,6 @@ from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMess
 
 app = Flask(__name__)
 
-# ดึงค่าจาก Environment Variables บน Railway
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 
@@ -43,7 +42,6 @@ def handle_text_message(event):
     except:
         user_name = "สมาชิกในครอบครัว"
 
-    # บันทึกข้อความลง Google Sheets (Family Travel & Meal Log (OS))
     save_to_google_sheets(
         date_time=event.timestamp,
         name=user_name,
@@ -98,15 +96,12 @@ def save_to_google_sheets(date_time, name, category, location_or_shop, detail, a
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # โหลด Credentials และกำหนดให้ใช้เวลาแบบระบุตัวตนรอบรับความคลาดเคลื่อนของเซิร์ฟเวอร์
-        creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
+        # ดึงค่า JSON จาก Environment Variable บน Railway มาใช้งานโดยตรง
+        creds_json = json.loads(os.environ.get('GOOGLE_CREDENTIALS'))
+        creds = Credentials.from_service_account_info(creds_json, scopes=scope)
         
         client = gspread.authorize(creds)
-        
-        # เปิดไฟล์ Google Sheets ชื่อ 'Family Travel & Meal Log (OS)'
         sheet = client.open("Family Travel & Meal Log (OS)").sheet1
-        
-        # เพิ่มแถวข้อมูลใหม่ลงในชีท
         sheet.append_row([str(date_time), name, category, location_or_shop, detail, amount, image_url])
     except Exception as e:
         print(f"Error saving to Google Sheets: {e}")
