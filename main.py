@@ -6,6 +6,7 @@ import cloudinary.uploader
 from datetime import datetime, timezone, timedelta
 from google import genai
 from google.genai import types
+from PIL import Image
 from google.oauth2.service_account import Credentials
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -57,6 +58,35 @@ def get_sheet():
     client = gspread.authorize(creds)
     return client.open("Family Travel & Meal Log (OS)").sheet1
 
+def analyze_image_with_gemini(image_path):
+    """ให้ Gemini ดูรูปภาพแล้วระบุหมวดหมู่และคำอธิบายภาษาไทยอัตโนมัติ"""
+    if not gemini_client:
+        return {"category": "รูปภาพความทรงจำ", "location": "-", "detail": "ส่งรูปภาพบันทึกทริป"}
+
+    prompt = """
+คุณคือ AI ผู้ช่วยบันทึกข้อมูลภาพถ่ายของครอบครัว
+ช่วยดูรูปภาพนี้ แล้วระบุข้อมูลลงในรูปแบบ JSON Object:
+{
+  "category": "หมวดหมู่หลัก เช่น อาหาร, ที่พัก, สถานที่ท่องเที่ยว, ครอบครัว, ซื้อของ",
+  "location": "สถานที่หรือประเภทร้าน/ที่พักที่ปรากฏในรูป (ถ้าไม่แน่ใจให้ใส่ '-')",
+  "detail": "คำอธิบายสิ่งที่เห็นในรูปสั้นๆ 1 ประโยค เช่น ทานส้มตำ ไก่ย่าง หรือ ห้องนอนเตียงคู่ หรือ ถ่ายรูปครอบครัว"
+}
+ตอบเฉพาะ JSON เท่านั้น
+"""
+    try:
+        pil_img = Image.open(image_path)
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[prompt, pil_img],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Error analyzing image with Gemini: {e}")
+        return {"category": "รูปภาพความทรงจำ", "location": "-", "detail": "ส่งรูปภาพบันทึกทริป"}
+
 def ask_gemini_agent(user_message, sheet_data):
     """ใช้ Gemini วิเคราะห์เจตนาผู้ใช้และค้นหาข้อมูลจาก Sheet"""
     if not gemini_client:
@@ -74,18 +104,18 @@ def ask_gemini_agent(user_message, sheet_data):
 ให้ตอบกลับในรูปแบบ JSON Object เท่านั้น โดยมีโครงสร้างดังนี้:
 {{
   "action": "FIND_IMAGE" หรือ "SUMMARIZE" หรือ "SAVE",
-  "image_url": "URL รูปภาพจากตารางที่ตรงกับสิ่งที่ผู้ใช้หามากที่สุด (ใช้เมื่อ action เป็น FIND_IMAGE เท่านั้น หากไม่พบให้ใส่ null)",
+  "image_url": "URL รูปภาพจากตารางคอลัมน์ H ที่ตรงกับสิ่งที่ผู้ใช้หามากที่สุด (ถ้าไม่พบให้ใส่ null)",
   "text_reply": "ข้อความตอบกลับผู้ใช้อย่างสุภาพ กระชับ และเป็นธรรมชาติ"
 }}
 
 แนวทางการตัดสินใจ:
-1. หากผู้ใช้ต้องการดูรูปภาพ, ค้นหารูปภาพ, รูปอาหาร, รูปเที่ยว ให้เลือก action: "FIND_IMAGE" และเลือก image_url จากคอลัมน์ H ที่สอดคล้องที่สุด
-2. หากผู้ใช้ต้องการให้สรุป, สรุปกิจกรรม, สรุปรายวัน/รายสัปดาห์ หรือถามข้อมูลทั่วไป ให้เลือก action: "SUMMARIZE" และเขียนสรุปใน text_reply
-3. หากผู้ใช้พิมพ์ข้อความเล่าเรื่อง, จดบันทึกทั่วไป, ไม่ได้ถามหรือขออะไร ให้เลือก action: "SAVE"
+1. หากผู้ใช้ต้องการดูรูปภาพ, ค้นหารูปภาพ (เช่น รูปอาหาร, รูปที่พัก, รูปเที่ยว, รูปล่าสุด) ให้เลือก action: "FIND_IMAGE" และเลือก image_url จากคอลัมน์ H ที่ตรงที่สุด
+2. หากผู้ใช้ต้องการให้สรุป, สรุปกิจกรรม, สรุปรายวัน หรือถามข้อมูลในตาราง ให้เลือก action: "SUMMARIZE" และเขียนสรุปใน text_reply
+3. หากผู้ใช้พิมพ์บันทึกทั่วไป ไม่ได้ถาม ให้เลือก action: "SAVE"
 """
     try:
         response = gemini_client.models.generate_content(
-            model='gemini-3.5-flash-lite',
+            model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -124,7 +154,6 @@ def handle_text_message(event):
     except Exception:
         user_name = "สมาชิกในครอบครัว"
 
-    # ดึงข้อมูลจากชีทเพื่อให้ AI ใช้วิเคราะห์
     try:
         sheet = get_sheet()
         records = sheet.get_all_values()
@@ -132,7 +161,6 @@ def handle_text_message(event):
         records = []
         print(f"Error loading sheet: {e}")
 
-    # ส่งให้ Gemini วิเคราะห์
     analysis = ask_gemini_agent(user_message, records)
     action = analysis.get("action", "SAVE")
 
@@ -163,7 +191,7 @@ def handle_text_message(event):
         )
         return
 
-    # กรณีเป็นข้อความบันทึกทั่วไป (action == "SAVE")
+    # บันทึกข้อความทั่วไป
     save_to_google_sheets(
         date_time=date_str,
         name=user_name,
@@ -200,6 +228,13 @@ def handle_image_message(event):
             fd.write(chunk)
 
     try:
+        # ให้ Gemini ดูรูปและสร้างคำบรรยายอัตโนมัติ
+        ai_meta = analyze_image_with_gemini(image_filename)
+        img_category = ai_meta.get("category", "รูปภาพความทรงจำ")
+        img_location = ai_meta.get("location", "-")
+        img_detail = ai_meta.get("detail", "บันทึกรูปภาพ")
+
+        # อัปโหลดรูปขึ้น Cloudinary
         upload_result = cloudinary.uploader.upload(
             image_filename,
             folder="family_bot",
@@ -208,7 +243,10 @@ def handle_image_message(event):
         image_url = upload_result.get('secure_url')
         image_preview_formula = f'=IMAGE("{image_url}")'
     except Exception as e:
-        print(f"Error uploading to Cloudinary: {e}")
+        print(f"Error handling image: {e}")
+        img_category = "รูปภาพความทรงจำ"
+        img_location = "-"
+        img_detail = "ส่งรูปภาพบันทึกทริป"
         image_preview_formula = "เกิดข้อผิดพลาดในการอัปโหลดรูป"
         image_url = "-"
     finally:
@@ -218,9 +256,9 @@ def handle_image_message(event):
     save_to_google_sheets(
         date_time=date_str,
         name=user_name,
-        category="รูปภาพความทรงจำ",
-        location_or_shop="สถานที่ท่องเที่ยว",
-        detail="ส่งรูปภาพบันทึกทริป",
+        category=img_category,
+        location_or_shop=img_location,
+        detail=img_detail,
         amount="0",
         image_preview=image_preview_formula,
         image_link=image_url
@@ -228,7 +266,7 @@ def handle_image_message(event):
 
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text=f"บันทึกรูปภาพลงระบบเรียบร้อยครับ ({date_str})")
+        TextSendMessage(text=f"บันทึกรูปภาพเรียบร้อยครับ ({date_str})\nหมวดหมู่: {img_category}\nรายละเอียด: {img_detail}")
     )
 
 def save_to_google_sheets(date_time, name, category, location_or_shop, detail, amount, image_preview, image_link):
@@ -247,10 +285,6 @@ def save_to_google_sheets(date_time, name, category, location_or_shop, detail, a
         print("Successfully saved to Google Sheets!")
     except Exception as e:
         print(f"Error saving to Google Sheets: {e}")
-
-        # กำหนดความสูงแถวล่าสุดให้เป็น 120px ทันทีหลังจาก append_row
-row_index = len(sheet.get_all_values())
-sheet.format(f"A{row_index}:H{row_index}", {"pixelSize": 120})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
