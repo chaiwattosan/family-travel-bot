@@ -7,3 +7,4 @@ gunicorn==21.2.0
 google-api-python-client
 cloudinary
 google-genai
+Pillow
