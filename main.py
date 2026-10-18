@@ -15,12 +15,10 @@ import cloudinary.uploader
 
 app = Flask(__name__)
 
-# ดึงค่า Configuration จาก Environment Variables ของ Railway
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
-# ตั้งค่า Cloudinary
 cloudinary.config(
     cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
     api_key=os.environ.get('CLOUDINARY_API_KEY'),
@@ -30,12 +28,10 @@ cloudinary.config(
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# ตั้งค่า Google GenAI Client
 gemini_client = None
 if GEMINI_API_KEY:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-# ตั้งค่า Google Sheets
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive'
@@ -60,7 +56,6 @@ def get_thai_time(timestamp_ms):
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 def analyze_image_with_gemini(image_path):
-    """ส่งรูปภาพให้ Gemini ช่วยดูและระบุหมวดหมู่/คำอธิบาย"""
     if not gemini_client:
         return {"category": "รูปภาพความทรงจำ", "location": "-", "detail": "ส่งรูปภาพบันทึกทริป"}
 
@@ -92,7 +87,6 @@ def analyze_image_with_gemini(image_path):
         return {"category": "รูปภาพความทรงจำ", "location": "-", "detail": "ส่งรูปภาพบันทึกทริป"}
 
 def ask_gemini_agent(user_message, sheet_data):
-    """ใช้ Gemini วิเคราะห์เจตนาผู้ใช้และค้นหาข้อมูลจาก Sheet โดยห้ามเดา"""
     if not gemini_client:
         return {"action": "SAVE"}
 
@@ -161,7 +155,7 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     user_id = event.source.user_id
-    print(f"========== MY USER ID IS: {user_id} ==========") # สั่งพิมพ์รหัสโชว์ใน Logs ของ Railway ทันทีที่ส่งข้อความ
+    print(f"========== MY USER ID IS: {user_id} ==========")
     
     user_message = event.message.text.strip()
     date_str = get_thai_time(event.timestamp)
@@ -179,7 +173,6 @@ def handle_text_message(event):
         records = []
         print(f"Error loading sheet: {e}")
 
-    # ส่งให้ Gemini วิเคราะห์
     analysis = ask_gemini_agent(user_message, records)
     action = analysis.get("action", "SAVE")
 
@@ -200,3 +193,51 @@ def handle_text_message(event):
             line_bot_api.reply_message(
                 event.reply_token,
                 TextSendMessage(text=reply_txt if reply_txt else "ไม่พบรูปภาพตามที่ระบุในบันทึกครับ")
+            )
+            return
+
+    elif action == "SUMMARIZE":
+        reply_txt = analysis.get("text_reply", "สรุปข้อมูลครอบครัว")
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply_txt)
+        )
+        return
+
+    return
+
+@handler.add(MessageEvent, message=ImageMessage)
+def handle_image_message(event):
+    user_id = event.source.user_id
+    print(f"========== MY USER ID IS: {user_id} ==========")
+    
+    date_str = get_thai_time(event.timestamp)
+    
+    try:
+        profile = line_bot_api.get_profile(user_id)
+        user_name = profile.display_name
+    except Exception:
+        user_name = "สมาชิกในครอบครัว"
+
+    message_content = line_bot_api.get_message_content(event.message.id)
+    image_path = f"/tmp/{event.message.id}.jpg"
+    with open(image_path, 'wb') as fd:
+        for chunk in message_content.iter_content():
+            fd.write(chunk)
+
+    try:
+        upload_result = cloudinary.uploader.upload(image_path, folder="family_bot")
+        image_url = upload_result.get('secure_url')
+    except Exception as e:
+        print(f"Cloudinary upload error: {e}")
+        return
+
+    analysis = analyze_image_with_gemini(image_path)
+    category = analysis.get("category", "รูปภาพความทรงจำ")
+    location = analysis.get("location", "-")
+    detail = analysis.get("detail", "บันทึกภาพถ่ายครอบครัว")
+
+    save_to_google_sheets(date_str, user_name, category, location, detail, image_url)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
