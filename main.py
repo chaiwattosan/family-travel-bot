@@ -3,18 +3,21 @@ import json
 import gspread
 import cloudinary
 import cloudinary.uploader
+from datetime import datetime, timezone, timedelta
 from google.oauth2.service_account import Credentials
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, ImageMessage, TextSendMessage
+from linebot.models import (
+    MessageEvent, TextMessage, ImageMessage, 
+    TextSendMessage, ImageSendMessage
+)
 
 app = Flask(__name__)
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 
-# ตั้งค่า Cloudinary จาก Environment Variables
 cloudinary.config(
     cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
     api_key=os.environ.get('CLOUDINARY_API_KEY'),
@@ -30,11 +33,22 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+def get_thai_time(timestamp_ms):
+    """แปลง Unix timestamp (ms) จาก LINE ให้เป็นเวลาไทย YYYY-MM-DD HH:MM:SS"""
+    utc_dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
+    thai_dt = utc_dt + timedelta(hours=7)
+    return thai_dt.strftime('%Y-%m-%d %H:%M:%S')
+
 def get_google_credentials():
     creds_json = json.loads(os.environ.get('GOOGLE_CREDENTIALS'))
     if "private_key" in creds_json:
         creds_json["private_key"] = creds_json["private_key"].replace("\\n", "\n")
     return Credentials.from_service_account_info(creds_json, scopes=SCOPES)
+
+def get_sheet():
+    creds = get_google_credentials()
+    client = gspread.authorize(creds)
+    return client.open("Family Travel & Meal Log (OS)").sheet1
 
 @app.route("/", methods=['GET'])
 def index():
@@ -54,8 +68,9 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
-    user_message = event.message.text
+    user_message = event.message.text.strip()
     user_id = event.source.user_id
+    date_str = get_thai_time(event.timestamp)
     
     try:
         profile = line_bot_api.get_profile(user_id)
@@ -63,8 +78,47 @@ def handle_text_message(event):
     except Exception:
         user_name = "สมาชิกในครอบครัว"
 
+    # โหมดคำสั่ง: ขอดูรูปภาพล่าสุด
+    if user_message in ["ขอดูรูป", "ขอดูรูปล่าสุด", "รูปภาพล่าสุด", "รูป"]:
+        try:
+            sheet = get_sheet()
+            records = sheet.get_all_values()
+            
+            # วนลูปหาแถวล่าสุดที่มี URL รูปภาพในคอลัมน์ H (index 7)
+            found_url = None
+            found_desc = None
+            for row in reversed(records):
+                if len(row) >= 8 and row[7].startswith("https://res.cloudinary.com"):
+                    found_url = row[7]
+                    found_desc = f"{row[0]} โดย {row[1]}"
+                    break
+            
+            if found_url:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    [
+                        TextSendMessage(text=f"ส่งรูปภาพล่าสุดให้แล้วครับ ({found_desc})"),
+                        ImageSendMessage(original_content_url=found_url, preview_image_url=found_url)
+                    ]
+                )
+                return
+            else:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="ยังไม่พบรูปภาพที่บันทึกไว้ในระบบครับ")
+                )
+                return
+        except Exception as e:
+            print(f"Error fetching image: {e}")
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="เกิดข้อผิดพลาดในการดึงรูปภาพครับ")
+            )
+            return
+
+    # บันทึกข้อความทั่วไป
     save_to_google_sheets(
-        date_time=event.timestamp,
+        date_time=date_str,
         name=user_name,
         category="ข้อความ / บันทึกทั่วไป",
         location_or_shop="-",
@@ -76,13 +130,14 @@ def handle_text_message(event):
 
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text=f"บันทึกข้อมูลเรียบร้อยครับ: {user_message}")
+        TextSendMessage(text=f"บันทึกข้อมูลเรียบร้อยครับ ({date_str})\nข้อความ: {user_message}")
     )
 
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
     message_id = event.message.id
     user_id = event.source.user_id
+    date_str = get_thai_time(event.timestamp)
     
     try:
         profile = line_bot_api.get_profile(user_id)
@@ -98,7 +153,6 @@ def handle_image_message(event):
             fd.write(chunk)
 
     try:
-        # อัปโหลดรูปขึ้น Cloudinary พร้อมจัดเก็บในโฟลเดอร์ family_bot
         upload_result = cloudinary.uploader.upload(
             image_filename,
             folder="family_bot",
@@ -115,7 +169,7 @@ def handle_image_message(event):
             os.remove(image_filename)
 
     save_to_google_sheets(
-        date_time=event.timestamp,
+        date_time=date_str,
         name=user_name,
         category="รูปภาพความทรงจำ",
         location_or_shop="สถานที่ท่องเที่ยว",
@@ -127,14 +181,12 @@ def handle_image_message(event):
 
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="บันทึกรูปภาพและจัดเก็บลง Google Sheets ให้เรียบร้อยแล้วครับ!")
+        TextSendMessage(text=f"บันทึกรูปภาพลงระบบเรียบร้อยครับ ({date_str})")
     )
 
 def save_to_google_sheets(date_time, name, category, location_or_shop, detail, amount, image_preview, image_link):
     try:
-        creds = get_google_credentials()
-        client = gspread.authorize(creds)
-        sheet = client.open("Family Travel & Meal Log (OS)").sheet1
+        sheet = get_sheet()
         sheet.append_row([
             str(date_time),
             name,
