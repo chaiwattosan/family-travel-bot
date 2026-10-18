@@ -6,7 +6,6 @@ import cloudinary.uploader
 from datetime import datetime, timezone, timedelta
 from google import genai
 from google.genai import types
-from PIL import Image
 from google.oauth2.service_account import Credentials
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -59,25 +58,29 @@ def get_sheet():
     return client.open("Family Travel & Meal Log (OS)").sheet1
 
 def analyze_image_with_gemini(image_path):
-    """ให้ Gemini ดูรูปภาพแล้วระบุหมวดหมู่และคำอธิบายภาษาไทยอัตโนมัติ"""
+    """ส่งรูปภาพเป็น Bytes ให้ Gemini 2.5 Flash ช่วยดูและสร้างคำบรรยายอัตโนมัติ"""
     if not gemini_client:
         return {"category": "รูปภาพความทรงจำ", "location": "-", "detail": "ส่งรูปภาพบันทึกทริป"}
 
-    prompt = """
-คุณคือ AI ผู้ช่วยบันทึกข้อมูลภาพถ่ายของครอบครัว
-ช่วยดูรูปภาพนี้ แล้วระบุข้อมูลลงในรูปแบบ JSON Object:
-{
-  "category": "หมวดหมู่หลัก เช่น อาหาร, ที่พัก, สถานที่ท่องเที่ยว, ครอบครัว, ซื้อของ",
-  "location": "สถานที่หรือประเภทร้าน/ที่พักที่ปรากฏในรูป (ถ้าไม่แน่ใจให้ใส่ '-')",
-  "detail": "คำอธิบายสิ่งที่เห็นในรูปสั้นๆ 1 ประโยค เช่น ทานส้มตำ ไก่ย่าง หรือ ห้องนอนเตียงคู่ หรือ ถ่ายรูปครอบครัว"
-}
-ตอบเฉพาะ JSON เท่านั้น
-"""
+    prompt = (
+        "คุณคือ AI ผู้ช่วยบันทึกข้อมูลภาพถ่ายของครอบครัว ช่วยดูรูปภาพนี้ "
+        "แล้วตอบกลับเป็น JSON Object เท่านั้น:\n"
+        "{\n"
+        '  "category": "หมวดหมู่หลัก เช่น อาหาร, ที่พัก, สถานที่ท่องเที่ยว, ครอบครัว, ซื้อของ",\n'
+        '  "location": "สถานที่หรือร้าน/ที่พักที่ปรากฏในรูป (ถ้าไม่ระบุให้ใส่ \'-\')",\n'
+        '  "detail": "คำอธิบายสิ่งที่เห็นในรูปสั้นๆ 1 ประโยค เช่น ทานส้มตำ ไก่ย่าง หรือ ห้องนอนเตียงคู่ หรือ ถ่ายรูปกับป้ายสถานที่"\n'
+        "}"
+    )
     try:
-        pil_img = Image.open(image_path)
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+
         response = gemini_client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=[prompt, pil_img],
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                prompt
+            ],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
             )
@@ -90,6 +93,9 @@ def analyze_image_with_gemini(image_path):
 def ask_gemini_agent(user_message, sheet_data):
     """ใช้ Gemini วิเคราะห์เจตนาผู้ใช้และค้นหาข้อมูลจาก Sheet"""
     if not gemini_client:
+        # Fallback กฎพื้นฐานถ้าไม่มี AI Key
+        if any(w in user_message for w in ["รูป", "ภาพ"]):
+            return {"action": "FIND_IMAGE", "image_url": None, "text_reply": "ค้นหารูปภาพ"}
         return {"action": "SAVE"}
 
     prompt = f"""
@@ -104,14 +110,14 @@ def ask_gemini_agent(user_message, sheet_data):
 ให้ตอบกลับในรูปแบบ JSON Object เท่านั้น โดยมีโครงสร้างดังนี้:
 {{
   "action": "FIND_IMAGE" หรือ "SUMMARIZE" หรือ "SAVE",
-  "image_url": "URL รูปภาพจากตารางคอลัมน์ H ที่ตรงกับสิ่งที่ผู้ใช้หามากที่สุด (ถ้าไม่พบให้ใส่ null)",
+  "image_url": "URL รูปภาพจากตารางคอลัมน์ H (index 7) ที่ตรงกับสิ่งที่ผู้ใช้หามากที่สุด (ถ้าไม่พบให้ใส่ null)",
   "text_reply": "ข้อความตอบกลับผู้ใช้อย่างสุภาพ กระชับ และเป็นธรรมชาติ"
 }}
 
 แนวทางการตัดสินใจ:
-1. หากผู้ใช้ต้องการดูรูปภาพ, ค้นหารูปภาพ (เช่น รูปอาหาร, รูปที่พัก, รูปเที่ยว, รูปล่าสุด) ให้เลือก action: "FIND_IMAGE" และเลือก image_url จากคอลัมน์ H ที่ตรงที่สุด
-2. หากผู้ใช้ต้องการให้สรุป, สรุปกิจกรรม, สรุปรายวัน หรือถามข้อมูลในตาราง ให้เลือก action: "SUMMARIZE" และเขียนสรุปใน text_reply
-3. หากผู้ใช้พิมพ์บันทึกทั่วไป ไม่ได้ถาม ให้เลือก action: "SAVE"
+1. หากผู้ใช้ต้องการดูรูปภาพ, ค้นหารูปภาพ เช่น "ขอดูรูปอาหารล่าสุด", "ขอรูปที่พัก", "รูปเที่ยว", "ขอดูรูป" ให้เลือก action: "FIND_IMAGE" และดึง image_url จากคอลัมน์ H ของแถวที่ตรงกับคำขอที่สุด (ดูจากคอลัมน์ category หรือ detail หรือวันเวลา)
+2. หากผู้ใช้ต้องการให้สรุป, สรุปกิจกรรม, สรุปรายวัน หรือถามยอดเงิน ให้เลือก action: "SUMMARIZE" และเขียนสรุปใน text_reply
+3. หากผู้ใช้พิมพ์บอกเล่าทั่วไป ไม่ได้มีคำสั่งค้นหาหรือขอดูอะไร ให้เลือก action: "SAVE"
 """
     try:
         response = gemini_client.models.generate_content(
@@ -124,6 +130,9 @@ def ask_gemini_agent(user_message, sheet_data):
         return json.loads(response.text)
     except Exception as e:
         print(f"Error querying Gemini: {e}")
+        # กรณี AI มีปัญหา ให้ fallback ตรวจหาคำว่ารูปเพื่อดึงภาพล่าสุด
+        if any(w in user_message for w in ["รูป", "ภาพ"]):
+            return {"action": "FIND_IMAGE", "image_url": None, "text_reply": "ส่งรูปภาพให้แล้วครับ"}
         return {"action": "SAVE"}
 
 @app.route("/", methods=['GET'])
@@ -167,6 +176,14 @@ def handle_text_message(event):
     if action == "FIND_IMAGE":
         found_url = analysis.get("image_url")
         reply_txt = analysis.get("text_reply", "ส่งรูปภาพให้แล้วครับ")
+        
+        # ถ้าระบบไม่ได้ URL เจาะจงมา ให้ดึงรูปที่มี URL แถวล่าสุดเป็นตัวสำรอง
+        if not found_url and records:
+            for row in reversed(records):
+                if len(row) >= 8 and row[7].startswith("https://res.cloudinary.com"):
+                    found_url = row[7]
+                    break
+
         if found_url and found_url.startswith("https://res.cloudinary.com"):
             line_bot_api.reply_message(
                 event.reply_token,
@@ -191,7 +208,7 @@ def handle_text_message(event):
         )
         return
 
-    # บันทึกข้อความทั่วไป
+    # กรณีบันทึกข้อความทั่วไป (SAVE)
     save_to_google_sheets(
         date_time=date_str,
         name=user_name,
@@ -228,11 +245,11 @@ def handle_image_message(event):
             fd.write(chunk)
 
     try:
-        # ให้ Gemini ดูรูปและสร้างคำบรรยายอัตโนมัติ
+        # ให้ Gemini ดูรูปและอ่านรายละเอียดจริง
         ai_meta = analyze_image_with_gemini(image_filename)
         img_category = ai_meta.get("category", "รูปภาพความทรงจำ")
         img_location = ai_meta.get("location", "-")
-        img_detail = ai_meta.get("detail", "บันทึกรูปภาพ")
+        img_detail = ai_meta.get("detail", "ส่งรูปภาพบันทึกทริป")
 
         # อัปโหลดรูปขึ้น Cloudinary
         upload_result = cloudinary.uploader.upload(
