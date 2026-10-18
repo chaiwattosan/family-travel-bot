@@ -95,7 +95,7 @@ def save_to_google_sheets(date_time, name, category, location_or_shop, detail, a
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # อ่านไฟล์ credentials.json จากโปรเจกต์โดยตรง
+        # อ่านไฟล์ credentials.json จากโปรเจกต์โดยตรงอย่างไร้รอยต่อ
         creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
         
         client = gspread.authorize(creds)
