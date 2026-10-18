@@ -161,16 +161,9 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     user_id = event.source.user_id
-    user_message = event.message.text.strip()
+    print(f"========== MY USER ID IS: {user_id} ==========") # สั่งพิมพ์รหัสโชว์ใน Logs ของ Railway ทันทีที่ส่งข้อความ
     
-    # ดักจับคำสั่งขอ User ID ไว้บรรทัดแรกสุด เพื่อให้ตอบกลับทันที
-    if any(keyword in user_message.lower() for keyword in ["my id", "userid", "user id", "ขอไอดี"]):
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=f"LINE User ID ของคุณคือ:\n{user_id}")
-        )
-        return
-
+    user_message = event.message.text.strip()
     date_str = get_thai_time(event.timestamp)
     
     try:
@@ -178,22 +171,6 @@ def handle_text_message(event):
         user_name = profile.display_name
     except Exception:
         user_name = "สมาชิกในครอบครัว"
-
-    # เช็คคำทักทายหรือขอให้แนะนำตัว
-    if any(keyword in user_message.lower() for keyword in ["สวัสดี", "แนะนำตัว", "สวัสดีครับ", "สวัสดีค่ะ", "แนะนำตัวหน่อย"]):
-        intro_text = (
-            f"สวัสดีครับคุณ {user_name} และทุกคนในครอบครัวตั้งทอง! 🏡✨\n"
-            "ผมคือ **Family Life & Care OS** ผู้ช่วยอัจฉริยะประจำบ้านครับ\n\n"
-            "ตอนนี้ผมทำงานในโหมด **Silent Background** เรียบร้อยแล้ว:\n"
-            "📸 ส่งรูปภาพเข้ามาในกลุ่ม ผมจะช่วยดูและบันทึกลง Google Sheets ให้แบบเงียบๆ ไม่รกแชท\n"
-            "🔍 พิมพ์ถามค้นหาภาพได้ เช่น 'ขอดูรูปอาหารมื้อล่าสุด' หรือ 'ขอดูรูปที่พัก'\n"
-            "💡 พิมพ์ 'my id' เพื่อดู User ID ของคุณได้ครับ"
-        )
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=intro_text)
-        )
-        return
 
     try:
         sheet = get_sheet()
@@ -223,51 +200,3 @@ def handle_text_message(event):
             line_bot_api.reply_message(
                 event.reply_token,
                 TextSendMessage(text=reply_txt if reply_txt else "ไม่พบรูปภาพตามที่ระบุในบันทึกครับ")
-            )
-            return
-
-    elif action == "SUMMARIZE":
-        reply_txt = analysis.get("text_reply", "สรุปข้อมูลครอบครัว")
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=reply_txt)
-        )
-        return
-
-    return
-
-@handler.add(MessageEvent, message=ImageMessage)
-def handle_image_message(event):
-    user_id = event.source.user_id
-    date_str = get_thai_time(event.timestamp)
-    
-    try:
-        profile = line_bot_api.get_profile(user_id)
-        user_name = profile.display_name
-    except Exception:
-        user_name = "สมาชิกในครอบครัว"
-
-    message_content = line_bot_api.get_message_content(event.message.id)
-    image_path = f"/tmp/{event.message.id}.jpg"
-    with open(image_path, 'wb') as fd:
-        for chunk in message_content.iter_content():
-            fd.write(chunk)
-
-    try:
-        upload_result = cloudinary.uploader.upload(image_path, folder="family_bot")
-        image_url = upload_result.get('secure_url')
-    except Exception as e:
-        print(f"Cloudinary upload error: {e}")
-        return
-
-    # ให้ Gemini วิเคราะห์รูปภาพ
-    analysis = analyze_image_with_gemini(image_path)
-    category = analysis.get("category", "รูปภาพความทรงจำ")
-    location = analysis.get("location", "-")
-    detail = analysis.get("detail", "บันทึกภาพถ่ายครอบครัว")
-
-    # บันทึกลง Google Sheets แบบเงียบๆ
-    save_to_google_sheets(date_str, user_name, category, location, detail, image_url)
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
