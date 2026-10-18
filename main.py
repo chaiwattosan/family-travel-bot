@@ -175,9 +175,16 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
+    user_id = event.source.user_id
+    chat_type = event.source.type  # เช็คว่าเป็น 'user' (1-1) หรือ 'group'/'room'
     user_message = event.message.text.strip()
     
-    # หากมีการค้นหาภาพหรือสรุปผ่านแชท ให้บอตตอบกลับเฉพาะกิจตามคำสั่ง
+    try:
+        profile = line_bot_api.get_profile(user_id)
+        user_name = profile.display_name
+    except Exception:
+        user_name = "สมาชิกในครอบครัว"
+
     try:
         sheet = get_sheet()
         records = sheet.get_all_values()
@@ -216,6 +223,13 @@ def handle_text_message(event):
         )
         return
 
+    # ถ้าคุยส่วนตัว 1-1 แล้วพิมพ์ข้อความทั่วไป ให้บอตตอบรับยืนยันว่าพร้อมรับคำสั่งหรือทดสอบ
+    if chat_type == "user":
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"รับทราบครับคุณ {user_name} (โหมดทดสอบ 1-1)\nคุณสามารถส่งรูปภาพเข้ามาเพื่อทดสอบระบบบันทึกและแจ้งเตือนได้เลยครับ!")
+        )
+
     return
 
 @handler.add(MessageEvent, message=ImageMessage)
@@ -250,6 +264,13 @@ def handle_image_message(event):
 
     # บันทึกลง Google Sheets และส่งแจ้งเตือนส่วนตัวหาแอดมิน
     save_to_google_sheets(date_str, user_name, category, location, detail, image_url)
+    
+    # ถ้าเป็นการส่งรูปในแชทส่วนตัว (1-1) ให้บอตตอบกลับยืนยันในแชทส่วนตัวด้วย เพื่อให้รู้ว่าทำงานเสร็จ
+    if event.source.type == "user":
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"✅ บันทึกรูปลง Google Sheets สำเร็จเรียบร้อยครับ!\n- หมวดหมู่: {category}\n- สถานที่: {location}")
+        )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
