@@ -1,9 +1,9 @@
 import os
 import json
 import gspread
+import cloudinary
+import cloudinary.uploader
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -14,8 +14,13 @@ app = Flask(__name__)
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 
-# ระบุ Folder ID ของโฟลเดอร์ Family Bot Photos ใน Google Drive
-DRIVE_FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID', '1KoHSMWW9VcfP3htnxQ--OafuY8LmEGfe')
+# ตั้งค่า Cloudinary จาก Environment Variables
+cloudinary.config(
+    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
+    api_key=os.environ.get('CLOUDINARY_API_KEY'),
+    api_secret=os.environ.get('CLOUDINARY_API_SECRET'),
+    secure=True
+)
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -30,37 +35,6 @@ def get_google_credentials():
     if "private_key" in creds_json:
         creds_json["private_key"] = creds_json["private_key"].replace("\\n", "\n")
     return Credentials.from_service_account_info(creds_json, scopes=SCOPES)
-
-def upload_image_to_drive(local_filepath, filename):
-    """อัปโหลดรูปภาพขึ้น Google Drive และคืนค่า direct view link กับ web view link"""
-    creds = get_google_credentials()
-    drive_service = build('drive', 'v3', credentials=creds)
-
-    file_metadata = {
-        'name': filename,
-        'parents': [DRIVE_FOLDER_ID]
-    }
-    media = MediaFileUpload(local_filepath, mimetype='image/jpeg', resumable=True)
-    
-    file = drive_service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields='id, webViewLink',
-        supportsAllDrives=True
-    ).execute()
-
-    file_id = file.get('id')
-    web_view_link = file.get('webViewLink')
-
-    # กำหนดสิทธิ์ให้เข้าถึงรูปภาพผ่านลิงก์ได้ เพื่อให้ Google Sheets ดึงสูตร =IMAGE(...) ไปแสดงผลได้
-    drive_service.permissions().create(
-        fileId=file_id,
-        body={'type': 'anyone', 'role': 'reader'},
-        supportsAllDrives=True
-    ).execute()
-
-    direct_image_url = f"https://drive.google.com/uc?export=view&id={file_id}"
-    return direct_image_url, web_view_link
 
 @app.route("/", methods=['GET'])
 def index():
@@ -124,12 +98,18 @@ def handle_image_message(event):
             fd.write(chunk)
 
     try:
-        direct_url, web_link = upload_image_to_drive(image_filename, image_filename)
-        image_preview_formula = f'=IMAGE("{direct_url}")'
+        # อัปโหลดรูปขึ้น Cloudinary พร้อมจัดเก็บในโฟลเดอร์ family_bot
+        upload_result = cloudinary.uploader.upload(
+            image_filename,
+            folder="family_bot",
+            public_id=f"trip_{message_id}"
+        )
+        image_url = upload_result.get('secure_url')
+        image_preview_formula = f'=IMAGE("{image_url}")'
     except Exception as e:
-        print(f"Error uploading to Drive: {e}")
+        print(f"Error uploading to Cloudinary: {e}")
         image_preview_formula = "เกิดข้อผิดพลาดในการอัปโหลดรูป"
-        web_link = "-"
+        image_url = "-"
     finally:
         if os.path.exists(image_filename):
             os.remove(image_filename)
@@ -142,12 +122,12 @@ def handle_image_message(event):
         detail="ส่งรูปภาพบันทึกทริป",
         amount="0",
         image_preview=image_preview_formula,
-        image_link=web_link
+        image_link=image_url
     )
 
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="บันทึกรูปภาพขึ้น Google Drive และจัดเก็บลง Google Sheets ให้เรียบร้อยแล้วครับ!")
+        TextSendMessage(text="บันทึกรูปภาพและจัดเก็บลง Google Sheets ให้เรียบร้อยแล้วครับ!")
     )
 
 def save_to_google_sheets(date_time, name, category, location_or_shop, detail, amount, image_preview, image_link):
