@@ -1,4 +1,5 @@
 import os
+import json
 import gspread
 from google.oauth2.service_account import Credentials
 from flask import Flask, request, abort
@@ -95,8 +96,9 @@ def save_to_google_sheets(date_time, name, category, location_or_shop, detail, a
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # อ่านไฟล์ credentials.json จากโปรเจกต์โดยตรงอย่างไร้รอยต่อ
-        creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
+        # ดึงค่า JSON จาก Environment Variable บน Railway มาแปลงใช้งานโดยตรง
+        creds_json = json.loads(os.environ.get('GOOGLE_CREDENTIALS'))
+        creds = Credentials.from_service_account_info(creds_json, scopes=scope)
         
         client = gspread.authorize(creds)
         sheet = client.open("Family Travel & Meal Log (OS)").sheet1
