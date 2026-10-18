@@ -76,7 +76,7 @@ def analyze_image_with_gemini(image_path):
             image_bytes = f.read()
 
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.5-flash-lite',
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                 prompt
@@ -121,7 +121,7 @@ def ask_gemini_agent(user_message, sheet_data):
 """
     try:
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.5-flash-lite',
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
