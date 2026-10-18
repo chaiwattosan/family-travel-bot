@@ -2,6 +2,8 @@ import os
 import json
 import gspread
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -12,8 +14,50 @@ app = Flask(__name__)
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 
+# ใส่ Folder ID ที่ก๊อปปี้มาจาก Google Drive ที่นี่
+DRIVE_FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID', '1KoHSMWW9VcfP3htnxQ--OafuY8LmEGfe')
+
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+SCOPES = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
+
+def get_google_credentials():
+    creds_json = json.loads(os.environ.get('GOOGLE_CREDENTIALS'))
+    if "private_key" in creds_json:
+        creds_json["private_key"] = creds_json["private_key"].replace("\\n", "\n")
+    return Credentials.from_service_account_info(creds_json, scopes=SCOPES)
+
+def upload_image_to_drive(local_filepath, filename):
+    creds = get_google_credentials()
+    drive_service = build('drive', 'v3', credentials=creds)
+
+    file_metadata = {
+        'name': filename,
+        'parents': [DRIVE_FOLDER_ID]  # ระบุให้อัปโหลดลงโฟลเดอร์นี้โดยตรง
+    }
+    media = MediaFileUpload(local_filepath, mimetype='image/jpeg', resumable=True)
+    
+    file = drive_service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id, webViewLink'
+    ).execute()
+
+    file_id = file.get('id')
+    web_view_link = file.get('webViewLink')
+
+    # เปิดสิทธิ์ให้เข้าถึงรูปผ่านลิงก์ได้ เพื่อแสดงภาพในชีท
+    drive_service.permissions().create(
+        fileId=file_id,
+        body={'type': 'anyone', 'role': 'reader'}
+    ).execute()
+
+    direct_image_url = f"https://drive.google.com/uc?export=view&id={file_id}"
+    return direct_image_url, web_view_link
 
 @app.route("/", methods=['GET'])
 def index():
@@ -39,7 +83,7 @@ def handle_text_message(event):
     try:
         profile = line_bot_api.get_profile(user_id)
         user_name = profile.display_name
-    except:
+    except Exception:
         user_name = "สมาชิกในครอบครัว"
 
     save_to_google_sheets(
@@ -49,12 +93,13 @@ def handle_text_message(event):
         location_or_shop="-",
         detail=user_message,
         amount="0",
-        image_url="-"
+        image_preview="-",
+        image_link="-"
     )
 
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text=f"บันทึกข้อมูลให้เรียบร้อยแล้วครับ: {user_message}")
+        TextSendMessage(text=f"บันทึกข้อมูลเรียบร้อยครับ: {user_message}")
     )
 
 @handler.add(MessageEvent, message=ImageMessage)
@@ -65,7 +110,7 @@ def handle_image_message(event):
     try:
         profile = line_bot_api.get_profile(user_id)
         user_name = profile.display_name
-    except:
+    except Exception:
         user_name = "สมาชิกในครอบครัว"
 
     message_content = line_bot_api.get_message_content(message_id)
@@ -75,7 +120,16 @@ def handle_image_message(event):
         for chunk in message_content.iter_content():
             fd.write(chunk)
 
-    drive_image_link = "อัปโหลดรูปลง Google Drive สำเร็จ"
+    try:
+        direct_url, web_link = upload_image_to_drive(image_filename, image_filename)
+        image_preview_formula = f'=IMAGE("{direct_url}")'
+    except Exception as e:
+        print(f"Error uploading to Drive: {e}")
+        image_preview_formula = "เกิดข้อผิดพลาดในการอัปโหลดรูป"
+        web_link = "-"
+    finally:
+        if os.path.exists(image_filename):
+            os.remove(image_filename)
 
     save_to_google_sheets(
         date_time=event.timestamp,
@@ -84,28 +138,30 @@ def handle_image_message(event):
         location_or_shop="สถานที่ท่องเที่ยว",
         detail="ส่งรูปภาพบันทึกทริป",
         amount="0",
-        image_url=drive_image_link
+        image_preview=image_preview_formula,
+        image_link=web_link
     )
 
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="บันทึกรูปภาพและข้อมูลลง Google Sheets เรียบร้อยแล้วครับ!")
+        TextSendMessage(text="บันทึกรูปภาพขึ้น Google Drive และจัดเก็บลง Google Sheets ให้เรียบร้อยแล้วครับ!")
     )
 
-def save_to_google_sheets(date_time, name, category, location_or_shop, detail, amount, image_url):
+def save_to_google_sheets(date_time, name, category, location_or_shop, detail, amount, image_preview, image_link):
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        
-        # ดึง JSON และแปลง \n ใน private_key ให้เป็น newline จริง
-        creds_json = json.loads(os.environ.get('GOOGLE_CREDENTIALS'))
-        if "private_key" in creds_json:
-            creds_json["private_key"] = creds_json["private_key"].replace("\\n", "\n")
-            
-        creds = Credentials.from_service_account_info(creds_json, scopes=scope)
+        creds = get_google_credentials()
         client = gspread.authorize(creds)
-        
         sheet = client.open("Family Travel & Meal Log (OS)").sheet1
-        sheet.append_row([str(date_time), name, category, location_or_shop, detail, amount, image_url])
+        sheet.append_row([
+            str(date_time),
+            name,
+            category,
+            location_or_shop,
+            detail,
+            amount,
+            image_preview,
+            image_link
+        ], value_input_option='USER_ENTERED')
         print("Successfully saved to Google Sheets!")
     except Exception as e:
         print(f"Error saving to Google Sheets: {e}")
