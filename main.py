@@ -109,7 +109,7 @@ def save_to_google_sheets(date_time, name, category, location_or_shop, detail, a
         # เพิ่มแถวข้อมูลใหม่ลงในชีท
         sheet.append_row([str(date_time), name, category, location_or_shop, detail, amount, image_url])
     except Exception as e:
-        print(f"Error saving to Google Sheets: {e}")
+        print(f"Error saving to Google Sheets: {e}") 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
