@@ -56,7 +56,7 @@ def get_sheet():
 
 def get_thai_time(timestamp_ms):
     tz = pytz.timezone('Asia/Bangkok')
-    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz)
+    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz) 
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 def analyze_image_with_gemini(image_path):
