@@ -14,7 +14,7 @@ app = Flask(__name__)
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 
-# ใส่ Folder ID ที่ก๊อปปี้มาจาก Google Drive ที่นี่
+# ระบุ Folder ID ของโฟลเดอร์ Family Bot Photos ใน Google Drive
 DRIVE_FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID', '1KoHSMWW9VcfP3htnxQ--OafuY8LmEGfe')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
@@ -32,28 +32,31 @@ def get_google_credentials():
     return Credentials.from_service_account_info(creds_json, scopes=SCOPES)
 
 def upload_image_to_drive(local_filepath, filename):
+    """อัปโหลดรูปภาพขึ้น Google Drive และคืนค่า direct view link กับ web view link"""
     creds = get_google_credentials()
     drive_service = build('drive', 'v3', credentials=creds)
 
     file_metadata = {
         'name': filename,
-        'parents': [DRIVE_FOLDER_ID]  # ระบุให้อัปโหลดลงโฟลเดอร์นี้โดยตรง
+        'parents': [DRIVE_FOLDER_ID]
     }
     media = MediaFileUpload(local_filepath, mimetype='image/jpeg', resumable=True)
     
     file = drive_service.files().create(
         body=file_metadata,
         media_body=media,
-        fields='id, webViewLink'
+        fields='id, webViewLink',
+        supportsAllDrives=True
     ).execute()
 
     file_id = file.get('id')
     web_view_link = file.get('webViewLink')
 
-    # เปิดสิทธิ์ให้เข้าถึงรูปผ่านลิงก์ได้ เพื่อแสดงภาพในชีท
+    # กำหนดสิทธิ์ให้เข้าถึงรูปภาพผ่านลิงก์ได้ เพื่อให้ Google Sheets ดึงสูตร =IMAGE(...) ไปแสดงผลได้
     drive_service.permissions().create(
         fileId=file_id,
-        body={'type': 'anyone', 'role': 'reader'}
+        body={'type': 'anyone', 'role': 'reader'},
+        supportsAllDrives=True
     ).execute()
 
     direct_image_url = f"https://drive.google.com/uc?export=view&id={file_id}"
