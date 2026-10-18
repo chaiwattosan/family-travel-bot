@@ -96,13 +96,17 @@ def save_to_google_sheets(date_time, name, category, location_or_shop, detail, a
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # ดึงค่า JSON จาก Environment Variable บน Railway มาแปลงใช้งานโดยตรง
+        # ดึง JSON และแปลง \n ใน private_key ให้เป็น newline จริง
         creds_json = json.loads(os.environ.get('GOOGLE_CREDENTIALS'))
+        if "private_key" in creds_json:
+            creds_json["private_key"] = creds_json["private_key"].replace("\\n", "\n")
+            
         creds = Credentials.from_service_account_info(creds_json, scopes=scope)
-        
         client = gspread.authorize(creds)
+        
         sheet = client.open("Family Travel & Meal Log (OS)").sheet1
         sheet.append_row([str(date_time), name, category, location_or_shop, detail, amount, image_url])
+        print("Successfully saved to Google Sheets!")
     except Exception as e:
         print(f"Error saving to Google Sheets: {e}")
 
