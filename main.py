@@ -152,8 +152,6 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
-@handler.add(MessageEvent, message=TextMessage)
-def handle_text_message(event):
     user_message = event.message.text.strip()
     user_id = event.source.user_id
     date_str = get_thai_time(event.timestamp)
@@ -186,10 +184,10 @@ def handle_text_message(event):
     except Exception as e:
         records = []
         print(f"Error loading sheet: {e}")
-    user_message = event.message.text.strip()
-    user_id = event.source.user_id
-    date_str = get_thai_time(event.timestamp)
-    
+
+    # ส่งให้ Gemini วิเคราะห์
+    analysis = ask_gemini_agent(user_message, records)
+    action = analysis.get("action", "SAVE")
     try:
         profile = line_bot_api.get_profile(user_id)
         user_name = profile.display_name
