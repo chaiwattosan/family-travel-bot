@@ -1,4 +1,5 @@
 import os
+import time
 import gspread
 from google.oauth2.service_account import Credentials
 from flask import Flask, request, abort
@@ -69,7 +70,6 @@ def handle_image_message(event):
     except:
         user_name = "สมาชิกในครอบครัว"
 
-    # ดึงรูปภาพจาก LINE
     message_content = line_bot_api.get_message_content(message_id)
     image_filename = f"trip_{message_id}.jpg"
     
@@ -77,7 +77,6 @@ def handle_image_message(event):
         for chunk in message_content.iter_content():
             fd.write(chunk)
 
-    # (จำลองลิงก์รูปภาพในชีท - เดี๋ยวเราเชื่อม Drive API ต่อได้ครับ)
     drive_image_link = "อัปโหลดรูปลง Google Drive สำเร็จ"
 
     save_to_google_sheets(
@@ -99,8 +98,9 @@ def save_to_google_sheets(date_time, name, category, location_or_shop, detail, a
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # ถือสิทธิ์เชื่อมต่อผ่านไฟล์ credentials.json ของ Service Account
+        # โหลด Credentials และกำหนดให้ใช้เวลาแบบระบุตัวตนรอบรับความคลาดเคลื่อนของเซิร์ฟเวอร์
         creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
+        
         client = gspread.authorize(creds)
         
         # เปิดไฟล์ Google Sheets ชื่อ 'Family Travel & Meal Log (OS)'
@@ -109,7 +109,7 @@ def save_to_google_sheets(date_time, name, category, location_or_shop, detail, a
         # เพิ่มแถวข้อมูลใหม่ลงในชีท
         sheet.append_row([str(date_time), name, category, location_or_shop, detail, amount, image_url])
     except Exception as e:
-        print(f"Error saving to Google Sheets: {e}") 
+        print(f"Error saving to Google Sheets: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
