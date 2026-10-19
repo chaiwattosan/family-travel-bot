@@ -109,24 +109,22 @@ def classify_text_message(text_message, sheet_data):
     if not gemini_client:
         return {"category": "บันทึกทั่วไป", "detail": text_message}
 
-    prompt = f"""
-คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot)
-หน้าที่ของคุณคืออ่านข้อความทุกรูปแบบที่สมาชิกในครอบครัวพิมพ์คุยกัน แล้วจัดหมวดหมู่ให้ตรงกับ 1 ใน 6 หมวดนี้เท่านั้น:
-1. อาหารการกิน (เช่น พูดคุยเรื่องเมนูอาหาร, ของกิน, ร้านอาหาร)
-2. สุขภาพ (เช่น อาการเจ็บป่วย, อาการผิดปกติของร่างกาย เช่น หมดแรง, หน้ามืด, ใจสั่น, ไปหาหมอ, ทานยา)
-3. การเดินทาง (เช่น เส้นทาง, การเดินทางกลับ, แผนที่, รถไฟ)
-4. การนัดหมาย/แจ้งเตือน (เช่น นัดหมายล่วงหน้า, เตือนเปิดไฟ, แจ้งเตือนเวลาต่างๆ, ฝากเตือนงานบ้าน)
-5. กิจกรรม (เช่น ทริปท่องเที่ยว, งานเทศกาล, งานสังสรรค์)
-6. บันทึกทั่วไป (ข้อความพูดคุยทักทาย หรือเรื่องอื่นๆ ทั่วไป)
-
-ข้อความที่ผู้ใช้พิมพ์: "{text_message}"
-
-ตอบกลับเป็น JSON Object เท่านั้น:
-{{
-  "category": "เลือกหนึ่งใน 6 หมวดหมู่ข้างต้น",
-  "detail": "สรุปเนื้อหาหรือข้อความนั้นให้กระชับและเข้าใจง่าย"
-}}
-"""
+    prompt = (
+        "คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot)\n"
+        "หน้าที่ของคุณคืออ่านข้อความทุกรูปแบบที่สมาชิกในครอบครัวพิมพ์คุยกัน แล้วจัดหมวดหมู่ให้ตรงกับ 1 ใน 6 หมวดนี้เท่านั้น:\n"
+        "1. อาหารการกิน (เช่น พูดคุยเรื่องเมนูอาหาร, ของกิน, ร้านอาหาร)\n"
+        "2. สุขภาพ (เช่น อาการเจ็บป่วย, อาการผิดปกติของร่างกาย เช่น หมดแรง, หน้ามืด, ใจสั่น, ไปหาหมอ, ทานยา)\n"
+        "3. การเดินทาง (เช่น เส้นทาง, การเดินทางกลับ, แผนที่, รถไฟ)\n"
+        "4. การนัดหมาย/แจ้งเตือน (เช่น นัดหมายล่วงหน้า, เตือนเปิดไฟ, แจ้งเตือนเวลาต่างๆ, ฝากเตือนงานบ้าน)\n"
+        "5. กิจกรรม (เช่น ทริปท่องเที่ยว, งานเทศกาล, งานสังสรรค์)\n"
+        "6. บันทึกทั่วไป (ข้อความพูดคุยทักทาย หรือเรื่องอื่นๆ ทั่วไป)\n\n"
+        f"ข้อความที่ผู้ใช้พิมพ์: \"{text_message}\"\n\n"
+        "ตอบกลับเป็น JSON Object เท่านั้น:\n"
+        "{\n"
+        '  "category": "เลือกหนึ่งใน 6 หมวดหมู่ข้างต้น",\n'
+        '  "detail": "สรุปเนื้อหาหรือข้อความนั้นให้กระชับและเข้าใจง่าย"\n'
+        "}"
+    )
     try:
         response = gemini_client.models.generate_content(
             model='gemini-3.5-flash-lite',
@@ -144,28 +142,26 @@ def extract_calendar_event(user_message, current_time_str):
     if not gemini_client:
         return None
 
-    prompt = f"""
-คุณคือ AI ผู้ช่วยจัดการนัดหมายของครอบครัว ปัจจุบันเวลาอ้างอิงคือ: "{current_time_str}"
-จงตรวจสอบข้อความของผู้ใช้: "{user_message}"
-
-วิเคราะห์ว่าข้อความนี้มีเจตนา "นัดหมาย" หรือ "ตั้งเตือนเวลาทำกิจกรรม" หรือไม่
-- หากใช่: ให้แปลงเป็น JSON Object โดยดึงข้อมูลดังนี้:
-  - summary: หัวข้อสั้นๆ ของนัดหมาย โดยตัดข้อความสั่งแจ้งเตือนออก
-  - start_time: วันที่และเวลาเริ่มต้น (รูปแบบ ISO 8601 เช่น YYYY-MM-DDTHH:MM:00) ถ้าไม่ระบุเวลาให้กำหนดเป็น 09:00:00
-  - end_time: วันที่และเวลาสิ้นสุด (ถ้าไม่มีกำหนด ให้บวกเพิ่มจาก start_time ไป 1 ชั่วโมง)
-  - reminder_minutes: จำนวนนาทีที่ต้องการให้แจ้งเตือนล่วงหน้า (คำนวณจากข้อความ เช่น "ก่อน 15 นาที" = 15, "ก่อน 30 นาที" = 30 ถ้าไม่ระบุให้ค่าเป็น 30)
-  - description: รายละเอียดเพิ่มเติมอื่นๆ
-- หากไม่ใช่: ให้ตอบกลับคำว่า null
-
-ตอบกลับเป็น JSON Object เท่านั้น (หรือ null):
-{{
-  "summary": "...",
-  "start_time": "YYYY-MM-DDTHH:MM:00",
-  "end_time": "YYYY-MM-DDTHH:MM:00",
-  "reminder_minutes": 30,
-  "description": "..."
-}}
-"""
+    prompt = (
+        "คุณคือ AI ผู้ช่วยจัดการนัดหมายของครอบครัว ปัจจุบันเวลาอ้างอิงคือ: " + current_time_str + "\n"
+        "จงตรวจสอบข้อความของผู้ใช้: \"" + user_message + "\"\n\n"
+        "วิเคราะห์ว่าข้อความนี้มีเจตนา \"นัดหมาย\" หรือ \"ตั้งเตือนเวลาทำกิจกรรม\" หรือไม่\n"
+        "- หากใช่: ให้แปลงเป็น JSON Object โดยดึงข้อมูลดังนี้:\n"
+        "  - summary: หัวข้อสั้นๆ ของนัดหมาย โดยตัดข้อความสั่งแจ้งเตือนออก\n"
+        "  - start_time: วันที่และเวลาเริ่มต้น (รูปแบบ ISO 8601 เช่น YYYY-MM-DDTHH:MM:00) ถ้าไม่ระบุเวลาให้กำหนดเป็น 09:00:00\n"
+        "  - end_time: วันที่และเวลาสิ้นสุด (ถ้าไม่มีกำหนด ให้บวกเพิ่มจาก start_time ไป 1 ชั่วโมง)\n"
+        "  - reminder_minutes: จำนวนนาทีที่ต้องการให้แจ้งเตือนล่วงหน้า (เช่น ก่อน 15 นาที = 15, ก่อน 30 นาที = 30 ถ้าไม่ระบุให้ค่าเป็น 30)\n"
+        "  - description: รายละเอียดเพิ่มเติมอื่นๆ\n"
+        "- หากไม่ใช่: ให้ตอบกลับคำว่า null\n\n"
+        "ตอบกลับเป็น JSON Object เท่านั้น (หรือ null):\n"
+        "{\n"
+        '  "summary": "...",\n'
+        '  "start_time": "YYYY-MM-DDTHH:MM:00",\n'
+        '  "end_time": "YYYY-MM-DDTHH:MM:00",\n'
+        '  "reminder_minutes": 30,\n'
+        '  "description": "..."\n'
+        "}"
+    )
     try:
         response = gemini_client.models.generate_content(
             model='gemini-3.5-flash-lite',
@@ -235,17 +231,146 @@ def ask_gemini_agent(user_message, sheet_data, calendar_events):
     if not gemini_client:
         return {"action": "SAVE"}
 
-    prompt = f"""
-คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot) และระบบทำหน้าที่สรุปข้อมูล (Daily Summary Agent)
-หน้าที่ของคุณคือตรวจสอบข้อความของผู้ใช้ โดยอ้างอิงจากข้อมูลใน Google Sheet และข้อมูลนัดหมายจากปฏิทินครอบครัวที่ให้ไว้อย่างเคร่งครัด
+    sheet_json_str = json.dumps(sheet_data, ensure_ascii=False)
+    calendar_json_str = json.dumps(calendar_events, ensure_ascii=False)
 
-ข้อมูลนัดหมายจากปฏิทินครอบครัว (Google Calendar):
-{json.dumps(calendar_events, ensure_ascii=False, indent=2)}
+    prompt = (
+        "คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot) และระบบทำหน้าที่สรุปข้อมูล (Daily Summary Agent)\n"
+        "หน้าที่ของคุณคือตรวจสอบข้อความของผู้ใช้ โดยอ้างอิงจากข้อมูลใน Google Sheet และข้อมูลนัดหมายจากปฏิทินครอบครัวที่ให้ไว้อย่างเคร่งครัด\n\n"
+        "ข้อมูลนัดหมายจากปฏิทินครอบครัว (Google Calendar):\n" + calendar_json_str + "\n\n"
+        "ข้อมูลใน Google Sheet:\n" + sheet_json_str + "\n\n"
+        f"ข้อความจากผู้ใช้: \"{user_message}\"\n\n"
+        "กฎเหล็กสำหรับการค้นหาและการสรุปผล (Strict Rules):\n"
+        "1. หากผู้ใช้ถามถึงกำหนดการ นัดหมาย หรือตารางเวลา ให้ดึงข้อมูลจากข้อมูลนัดหมายจากปฏิทินครอบครัวมาตอบให้ถูกต้องและตรงประเด็นที่สุด\n"
+        "2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน ให้รวบรวมเหตุการณ์ ข้อความสนทนา อาการป่วย และรูปภาพทั้งหมดมาสรุปแยกตาม 6 หมวดหมู่ พร้อมระบุเวลาและชื่อผู้ส่งให้ชัดเจน\n"
+        "3. หากเป็นการพูดคุยทั่วไป ให้เลือก action: \"SAVE\"\n\n"
+        "ตอบกลับเป็น JSON Object เท่านั้น:\n"
+        "{\n"
+        '  "action": "FIND_IMAGE" 혹은 "SUMMARIZE" 혹은 "SAVE",\n'
+        '  "image_url": "URL หรือ null",\n'
+        '  "text_reply": "ข้อความตอบกลับผู้ใช้"\n'
+        "}"
+    )
+    try:
+        response = gemini_client.models.generate_content(
+            model='gemini-3.5-flash-lite',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Error querying Gemini: {e}")
+        return {"action": "SAVE"}
 
-ข้อมูลใน Google Sheet:
-{json.dumps(sheet_data, ensure_ascii=False, indent=2)}
+def save_text_to_google_sheets(date_str, user_name, text_content, category):
+    try:
+        sheet = get_sheet()
+        row = [date_str, user_name, category, "-", text_content, "", "", ""]
+        sheet.append_row(row, value_input_option='USER_ENTERED')
+        print("Successfully saved text message to Google Sheets!")
 
-ข้อความจากผู้ใช้: "{user_message}"
+        if ADMIN_USER_ID:
+            notification_text = (
+                f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
+                f"👤 ผู้ส่ง: {user_name}\n"
+                f"📂 หมวดหมู่: {category}\n"
+                f"💬 ข้อความ: {text_content}\n"
+                f"⏰ เวลา: {date_str}"
+            )
+            line_bot_api.push_message(
+                ADMIN_USER_ID,
+                TextSendMessage(text=notification_text)
+            )
+    except Exception as e:
+        print(f"Error saving text to Google Sheets: {e}")
 
-กฎเหล็กสำหรับการค้นหาและการสรุปผล (Strict Rules):
-1. หากผู้ใช้ถามถึงกำหนดการ นัดหมาย หรือตารางเวลา (เช่น "วันนี้มีนัดอะไรบ้าง", "พรุ่งนี้มีนัดอะไรไหม") ให้ดึงข้อมูลจาก "ข้อมูลนัดหมายจากปฏิทินครอบครัว" ด้านบนมาตอบให้ถูกต้อง
+def save_to_google_sheets(date_str, user_name, category, location, detail, image_url):
+    try:
+        sheet = get_sheet()
+        preview_formula = f'=IMAGE("{image_url}", 4, 100, 100)' if image_url else ""
+        row = [date_str, user_name, category, location, detail, "", preview_formula, image_url]
+        sheet.append_row(row, value_input_option='USER_ENTERED')
+        print("Successfully saved image to Google Sheets!")
+
+        if ADMIN_USER_ID:
+            notification_text = (
+                f"🚨 **แจ้งเตือนการบันทึกภาพใหม่**\n\n"
+                f"👤 ผู้บันทึก: {user_name}\n"
+                f"📂 หมวดหมู่: {category}\n"
+                f"📍 สถานที่: {location}\n"
+                f"📝 รายละเอียด: {detail}\n"
+                f"⏰ เวลา: {date_str}"
+            )
+            line_bot_api.push_message(
+                ADMIN_USER_ID,
+                TextSendMessage(text=notification_text)
+            )
+    except Exception as e:
+        print(f"Error saving to Google Sheets or sending notification: {e}")
+        raise e
+
+@app.route("/")
+def index():
+    return "Family Travel Bot is running!"
+
+@app.route("/callback", methods=['POST'])
+def callback():
+    signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    return 'OK'
+
+@handler.add(MessageEvent, message=TextMessage)
+def handle_text_message(event):
+    user_id = event.source.user_id
+    chat_type = event.source.type
+    user_message = event.message.text.strip()
+    date_str = get_thai_time(event.timestamp)
+    user_name = get_user_display_name(user_id)
+
+    is_command = user_message.startswith("@Bot") or "สรุป" in user_message or "มีนัด" in user_message or "อะไร" in user_message
+
+    if not is_command:
+        try:
+            sheet = get_sheet()
+            records = sheet.get_all_values()
+        except Exception:
+            records = []
+            
+        classified = classify_text_message(user_message, records)
+        category = classified.get("category", "บันทึกทั่วไป")
+        detail = classified.get("detail", user_message)
+
+        save_text_to_google_sheets(date_str, user_name, detail, category)
+
+        calendar_event = extract_calendar_event(user_message, date_str)
+        if calendar_event:
+            success = create_google_calendar_event(calendar_event)
+            if success and ADMIN_USER_ID:
+                line_bot_api.push_message(
+                    ADMIN_USER_ID,
+                    TextSendMessage(text=f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n📌 หัวข้อ: {calendar_event.get('summary')}\n⏰ เริ่ม: {calendar_event.get('start_time')}\n🔔 แจ้งเตือนล่วงหน้า: {calendar_event.get('reminder_minutes')} นาที")
+                )
+        return
+
+    clean_message = user_message.replace("@Bot", "").strip()
+
+    try:
+        sheet = get_sheet()
+        records = sheet.get_all_values()
+    except Exception as e:
+        records = []
+        print(f"Error loading sheet: {e}")
+
+    calendar_events = get_family_calendar_events()
+    analysis = ask_gemini_agent(clean_message, records, calendar_events)
+    action = analysis.get("action", "SAVE")
+
+    if action == "FIND_IMAGE":
+        found_url = analysis.get("image_url")
+        reply_txt = analysis.get("text_reply", "ไม่พบรูปภาพที่
