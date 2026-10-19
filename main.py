@@ -1,7 +1,7 @@
 import os
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -13,6 +13,7 @@ from google import genai
 from google.genai import types
 import cloudinary
 import cloudinary.uploader
+from googleapiclient.discovery import build
 
 app = Flask(__name__)
 
@@ -37,7 +38,8 @@ if GEMINI_API_KEY:
 
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive'
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/calendar'
 ]
 
 def get_google_credentials():
@@ -52,6 +54,10 @@ def get_sheet():
     client = gspread.authorize(creds)
     sheet_id = os.environ.get('GOOGLE_SHEET_ID')
     return client.open_by_key(sheet_id).sheet1
+
+def get_calendar_service():
+    creds = get_google_credentials()
+    return build('calendar', 'v3', credentials=creds)
 
 def get_thai_time(timestamp_ms):
     tz = pytz.timezone('Asia/Bangkok')
@@ -133,6 +139,75 @@ def classify_text_message(text_message, sheet_data):
         print(f"Error classifying text: {e}")
         return {"category": "บันทึกทั่วไป", "detail": text_message}
 
+def extract_calendar_event(user_message, current_time_str):
+    if not gemini_client:
+        return None
+
+    prompt = f"""
+คุณคือ AI ผู้ช่วยจัดการนัดหมายของครอบครัว ปัจจุบันเวลาอ้างอิงคือ: "{current_time_str}"
+จงตรวจสอบข้อความของ,ผู้ใช้: "{user_message}"
+หากข้อความนี้เป็นการนัดหมาย หรือการแจ้งเตือนเวลา (เช่น นัดพบหมอ, พรุ่งนี้ล้อหมุน 7 โมง, วันจันทร์น้ำมาส่ง, อย่าลืมเปิดไฟทุ่มนึง) ให้ดึงข้อมูลออกมาเป็น JSON Object สำหรับสร้างปฏิทิน:
+- summary: หัวข้อการนัดหมาย/แจ้งเตือน
+- start_time: วันที่และเวลาเริ่มต้น (รูปแบบ ISO 8601 เช่น YYYY-MM-DDTHH:MM:00) ถ้าไม่ระบุเวลาให้กำหนดเป็น 08:00:00
+- end_time: วันที่และเวลาสิ้นสุด (ถ้าไม่มีกำหนด ให้บวกเพิ่มจาก start_time ไป 1 ชั่วโมง)
+- description: รายละเอียดเพิ่มเติม
+
+หากข้อความนี้ "ไม่ใช่" นัดหมายหรือการแจ้งเตือน ให้ตอบกลับค่า null ทันที
+
+ตอบกลับเป็น JSON Object เท่านั้น (หรือ null):
+{{
+  "summary": "...",
+  "start_time": "YYYY-MM-DDTHH:MM:00",
+  "end_time": "YYYY-MM-DDTHH:MM:00",
+  "description": "..."
+}}
+"""
+    try:
+        response = gemini_client.models.generate_content(
+            model='gemini-3.5-flash-lite',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        result_text = response.text.strip()
+        if "null" in result_text.lower():
+            return None
+        return json.loads(result_text)
+    except Exception as e:
+        print(f"Error extracting calendar event: {e}")
+        return None
+
+def create_google_calendar_event(event_data):
+    try:
+        service = get_calendar_service()
+        event = {
+            'summary': event_data.get('summary'),
+            'description': event_data.get('description', 'บันทึกโดย Family Bot'),
+            'start': {
+                'dateTime': event_data.get('start_time'),
+                'timeZone': 'Asia/Bangkok',
+            },
+            'end': {
+                'dateTime': event_data.get('end_time'),
+                'timeZone': 'Asia/Bangkok',
+            },
+            'reminders': {
+                'useDefault': False,
+                'overrides': [
+                    {'method': 'popup', 'minutes': 1440},  # แจ้งเตือนล่วงหน้า 1 วัน (1440 นาที)
+                    {'method': 'popup', 'minutes': 30},   # แจ้งเตือนก่อนเวลา 30 นาที
+                ],
+            },
+        }
+        calendar_id = os.environ.get('GOOGLE_CALENDAR_ID', 'primary')
+        created_event = service.events().insert(calendarId=calendar_id, body=event).execute()
+        print(f"Event created: {created_event.get('htmlLink')}")
+        return True
+    except Exception as e:
+        print(f"Error creating Google Calendar event: {e}")
+        return False
+
 def ask_gemini_agent(user_message, sheet_data):
     if not gemini_client:
         return {"action": "SAVE"}
@@ -154,7 +229,7 @@ def ask_gemini_agent(user_message, sheet_data):
 
 ตอบกลับเป็น JSON Object เท่านั้น:
 {{
-  "action": "FIND_IMAGE" หรือ "SUMMARIZE" หรือ "SAVE",
+  "action": "FIND_IMAGE" 혹은 "SUMMARIZE" 혹은 "SAVE",
   "image_url": "URL หรือ null",
   "text_reply": "ข้อความตอบกลับผู้ใช้"
 }}
@@ -241,11 +316,9 @@ def handle_text_message(event):
     date_str = get_thai_time(event.timestamp)
     user_name = get_user_display_name(user_id)
 
-    # ตรวจสอบว่าเป็นคำสั่งเรียก AI สรุปข้อมูล หรือขึ้นต้นด้วยคำว่า สรุป / @Bot หรือไม่
     is_command = user_message.startswith("@Bot") or "สรุป" in user_message
 
     if not is_command:
-        # ถ้าไม่ใช่คำสั่ง ให้ทำงานในโหมดเก็บบันทึกปกติ (Silent Logging)
         try:
             sheet = get_sheet()
             records = sheet.get_all_values()
@@ -256,10 +329,20 @@ def handle_text_message(event):
         category = classified.get("category", "บันทึกทั่วไป")
         detail = classified.get("detail", user_message)
 
+        # บันทึกลง Google Sheets ตามปกติ
         save_text_to_google_sheets(date_str, user_name, detail, category)
+
+        # 📅 ตรวจสอบเพิ่มเติม: ถือว่าเป็นนัดหมายหรือไม่ ถ้าใช่ให้สร้างลง Google Calendar อัตโนมัติ
+        calendar_event = extract_calendar_event(user_message, date_str)
+        if calendar_event:
+            success = create_google_calendar_event(calendar_event)
+            if success and ADMIN_USER_ID:
+                line_bot_api.push_message(
+                    ADMIN_USER_ID,
+                    TextSendMessage(text=f"📅 **บันทึกนัดหมายลงปฏิทินสำเร็จ!**\n📌 หัวข้อ: {calendar_event.get('summary')}\n⏰ เริ่ม: {calendar_event.get('start_time')}")
+                )
         return
 
-    # กรณีที่เป็นคำสั่งสั่งการ ให้ส่งไปให้ Gemini ประมวลผล (เช่น สรุปประจำวัน หรือค้นหารูป)
     clean_message = user_message.replace("@Bot", "").strip()
 
     try:
@@ -314,7 +397,7 @@ def handle_image_message(event):
 
     try:
         message_content = line_bot_api.get_message_content(event.message.id)
-        with open(image_path, 'wb') as fd:
+        with open(image_path, 'wb'] as fd:
             for chunk in message_content.iter_content():
                 fd.write(chunk)
     except Exception as e:
