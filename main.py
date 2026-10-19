@@ -102,13 +102,13 @@ def ask_gemini_agent(user_message, sheet_data):
 
 ข้อความจากผู้ใช้: "{user_message}"
 
-กฎเหล็ก (Strict Rules):
+กฎเหล็กสำหรับการค้นหา (Strict Search Rules):
 1. ห้ามเดาหรือจินตนาการข้อมูลที่ไม่มีอยู่จริงในตารางเด็ดขาด
 2. หากผู้ใช้ต้องการค้นหารูปภาพ (action: "FIND_IMAGE"):
-   - ให้ตรวจคอลัมน์ category และ detail ว่าตรงกับสิ่งที่ผู้ใช้ระบุหรือไม่
-   - หากพบ ให้ระบุ image_url และระบุ text_reply
-   - หากในตาราง "ไม่มี" รูปที่ตรงกับหมวดหมู่หรือคำขอ ให้กำหนด "image_url": null และตอบใน text_reply เช่น "ยังไม่พบรูปภาพเกี่ยวกับ [สิ่งที่หา] ในระบบครับ"
-3. หากผู้ใช้ขอให้สรุป (action: "SUMMARIZE"): สรุปเฉพาะสิ่งที่มีบันทึกไว้ในตารางเท่านั้น ห้ามแต่งเติม
+   - ให้ทำการ "ตีความและเทียบเคียงความหมาย" (Semantic Matching) เช่น ถ้าผู้ใช้หา "อาหารเช้า" หรือ "มื้อเช้า" ให้ตรวจดูแถวที่มีหมวดหมู่ "อาหาร" หรือรายละเอียดที่เกี่ยวข้องกับการทานอาหาร แม้คำจะไม่ตรงกันเป๊ะก็ตาม
+   - หากพบรูปที่ใกล้เคียงที่สุด ให้ดึง image_url ออกมา และเขียนข้อความอธิบายใน text_reply
+   - หากในตาราง "ไม่มี" รูปที่สอดคล้องเลย ให้กำหนด "image_url": null และตอบใน text_reply เช่น "ยังไม่พบรูปภาพเกี่ยวกับสิ่งที่หาในระบบครับ"
+3. หากผู้ใช้ขอให้สรุป (action: "SUMMARIZE"): สรุปเฉพาะสิ่งที่มีบันทึกไว้ในตารางเท่านั้น
 4. หากเป็นการพูดคุยทั่วไปหรือบอกเล่าเพื่อจดบันทึก ให้เลือก action: "SAVE"
 
 ตอบกลับเป็น JSON Object เท่านั้น:
@@ -134,6 +134,7 @@ def ask_gemini_agent(user_message, sheet_data):
 def save_to_google_sheets(date_str, user_name, category, location, detail, image_url):
     try:
         sheet = get_sheet()
+        # ใช้สูตร IMAGE มาตรฐานเพื่อให้ Google Sheet เรนเดอร์รูปภาพพรีวิวขนาดเล็กได้ทันที
         preview_formula = f'=IMAGE("{image_url}")' if image_url else ""
         row = [date_str, user_name, category, location, detail, "", preview_formula, image_url]
         sheet.append_row(row)
@@ -157,7 +158,7 @@ def save_to_google_sheets(date_str, user_name, category, location, detail, image
             )
     except Exception as e:
         print(f"Error saving to Google Sheets or sending notification: {e}")
-        raise e  # ส่ง Error ออกไปให้เห็นชัดๆ ใน Log ถ้าบันทึกชีทไม่สำเร็จ
+        raise e
 
 @app.route("/")
 def index():
