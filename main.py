@@ -146,20 +146,17 @@ def extract_calendar_event(user_message, current_time_str):
     prompt = f"""
 คุณคือ AI ผู้ช่วยจัดการนัดหมายของครอบครัว ปัจจุบันเวลาอ้างอิงคือ: "{current_time_str}"
 จงตรวจสอบข้อความของผู้ใช้: "{user_message}"
-หากข้อความนี้เป็นการนัดหมาย หรือการแจ้งเตือนเวลา (เช่น นัดพบหมอ, พรุ่งนี้ล้อหมุน 7 โมง, วันจันทร์น้ำมาส่ง, อย่าลืมเปิดไฟทุ่มนึง) ให้ดึงข้อมูลออกมาเป็น JSON Object สำหรับสร้างปฏิทิน:
-- summary: หัวข้อการนัดหมาย/แจ้งเตือน
-- start_time: วันที่และเวลาเริ่มต้น (รูปแบบ ISO 8601 เช่น YYYY-MM-DDTHH:MM:00) ถ้าไม่ระบุเวลาให้กำหนดเป็น 08:00:00
-- end_time: วันที่และเวลาสิ้นสุด (ถ้าไม่มีกำหนด ให้บวกเพิ่มจาก start_time ไป 1 ชั่วโมง)
-- description: รายละเอียดเพิ่มเติม
 
-หากข้อความนี้ "ไม่ใช่" นัดหมายหรือการแจ้งเตือน ให้ตอบกลับค่า null ทันที
+วิเคราะห์ว่าข้อความนี้มีเจตนา "นัดหมาย" หรือ "ตั้งเตือนเวลาทำกิจกรรม" หรือไม่ (เช่น นัดพบหมอ, พรุ่งนี้ล้อหมุน 7 โมง, แจ้งเตือนกินข้าว 18:10, วันจันทร์น้ำมาส่ง)
+- หากใช่: ให้แปลงเป็น JSON Object สำหรับสร้างปฏิทิน (ให้ใช้วันที่ปัจจุบันหรือวันที่ที่ระบุในข้อความ)
+- หากไม่ใช่: ให้ตอบกลับเครื่องหมายปีกกาเปล่าๆ หรือคำว่า null
 
-ตอบกลับเป็น JSON Object เท่านั้น (หรือ null):
+ตอบกลับเป็น JSON Object เท่านั้น:
 {{
-  "summary": "...",
+  "summary": "หัวข้อสั้นๆ ของนัดหมาย",
   "start_time": "YYYY-MM-DDTHH:MM:00",
   "end_time": "YYYY-MM-DDTHH:MM:00",
-  "description": "..."
+  "description": "รายละเอียดเพิ่มเติม"
 }}
 """
     try:
@@ -171,8 +168,11 @@ def extract_calendar_event(user_message, current_time_str):
             )
         )
         result_text = response.text.strip()
-        if "null" in result_text.lower():
+        print(f"Gemini Calendar Extraction Result: {result_text}")
+        
+        if "null" in result_text.lower() or "{" not in result_text:
             return None
+            
         return json.loads(result_text)
     except Exception as e:
         print(f"Error extracting calendar event: {e}")
@@ -200,10 +200,9 @@ def create_google_calendar_event(event_data):
                 ],
             },
         }
-        # กำหนด Calendar ID ของครอบครัวที่คุณสร้างขึ้น
         calendar_id = '472254e055528125304e1d3cb80cf50f8cab156a67d12c7eda0c94dfb0c02791@group.calendar.google.com'
         created_event = service.events().insert(calendarId=calendar_id, body=event).execute()
-        print(f"Event created: {created_event.get('htmlLink')}")
+        print(f"Event created successfully: {created_event.get('htmlLink')}")
         return True
     except Exception as e:
         print(f"Error creating Google Calendar event: {e}")
@@ -224,9 +223,8 @@ def ask_gemini_agent(user_message, sheet_data):
 
 กฎเหล็กสำหรับการค้นหาและการสรุปผล (Strict Rules):
 1. คำว่า "อากง", "เชฟเทียน" และ "คุณพ่อ" หมายถึงบุคคลเดียวกัน ให้เชื่อมโยงความหมายนี้ในการค้นหาข้อมูลเสมอ
-2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน (เช่น พิมพ์ว่า "สรุปวันนี้ให้หน่อย", "วันนี้มีอะไรบ้าง") ให้รวบรวมเหตุการณ์ ข้อความสนทนา อาการป่วย และรูปภาพทั้งหมดที่เกิดขึ้นใน "วันปัจจุบัน" มาสรุปเป็นประเด็นสั้นๆ กระชับ แยกตาม 6 หมวดหมู่ พร้อมระบุเวลาและชื่อผู้ส่งให้ชัดเจน
-3. หากผู้ใช้ถามหารูปภาพมื้ออาหารตามเวลา ให้เทียบเคียงช่วงเวลาที่โพสต์ให้ถูกต้อง (เช้า 06:00-10:00, เที่ยง 10:00-14:00, เย็น 15:00 เป็นต้นไป) และระบุเวลาที่โพสต์กำกับ
-4. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม ให้เลือก action: "SAVE" ทันที
+2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน ให้รวบรวมเหตุการณ์ ข้อความสนทนา อาการป่วย และรูปภาพทั้งหมดที่เกิดขึ้นใน "วันปัจจุบัน" มาสรุปเป็นประเด็นสั้นๆ กระชับ แยกตาม 6 หมวดหมู่ พร้อมระบุเวลาและชื่อผู้ส่งให้ชัดเจน
+3. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม ให้เลือก action: "SAVE" ทันที
 
 ตอบกลับเป็น JSON Object เท่านั้น:
 {{
@@ -332,7 +330,7 @@ def handle_text_message(event):
 
         save_text_to_google_sheets(date_str, user_name, detail, category)
 
-        # ตรวจสอบว่าเป็นนัดหมายหรือไม่ ถ้าใช่สร้างลง Google Calendar ของครอบครัวอัตโนมัติ
+        # 📅 ตรวจสอบและสร้างลง Google Calendar ครอบครัวอัตโนมัติ
         calendar_event = extract_calendar_event(user_message, date_str)
         if calendar_event:
             success = create_google_calendar_event(calendar_event)
