@@ -136,10 +136,12 @@ def ask_gemini_agent(user_message, sheet_data):
 def save_to_google_sheets(date_str, user_name, category, location, detail, image_url):
     try:
         sheet = get_sheet()
-        # ใช้สูตร IMAGE มาตรฐานเพื่อให้ Google Sheets แสดงพรีวิวรูปภาพขนาดเล็กได้ทันที
-        preview_formula = f'=IMAGE("{image_url}")' if image_url else ""
+        # ใช้สูตร IMAGE แบบระบุ mode 4 หรือให้เรนเดอร์ผ่าน gspread อย่างถูกต้อง
+        preview_formula = f'=IMAGE("{image_url}", 4, 100, 100)' if image_url else ""
         row = [date_str, user_name, category, location, detail, "", preview_formula, image_url]
-        sheet.append_row(row)
+        
+        # ใช้ value_input_option='USER_ENTERED' เพื่อให้ Google Sheets แปลงสูตร =IMAGE(...) เป็นรูปภาพทันที
+        sheet.append_row(row, value_input_option='USER_ENTERED')
         print("Successfully saved to Google Sheets!")
 
         if ADMIN_USER_ID:
@@ -151,12 +153,10 @@ def save_to_google_sheets(date_str, user_name, category, location, detail, image
                 f"📝 รายละเอียด: {detail}\n"
                 f"⏰ เวลา: {date_str}"
             )
+            # ส่งเฉพาะข้อความแจ้งเตือนตัวหนังสืออย่างเดียว (เอา ImageSendMessage ออก เพื่อไม่ให้ส่งรูปกลับมาหาแอดมิน)
             line_bot_api.push_message(
                 ADMIN_USER_ID,
-                [
-                    TextSendMessage(text=notification_text),
-                    ImageSendMessage(original_content_url=image_url, preview_image_url=image_url)
-                ]
+                TextSendMessage(text=notification_text)
             )
     except Exception as e:
         print(f"Error saving to Google Sheets or sending notification: {e}")
@@ -186,7 +186,6 @@ def handle_text_message(event):
     if is_mentioned:
         user_message = user_message.replace("@Bot", "").strip()
 
-    # ถ้านี่คือ "แชทกลุ่ม" และ "ไม่มีการ @Bot เรียก" บอตจะไม่ตอบอะไรทั้งสิ้น (Silent Mode)
     if chat_type != "user" and not is_mentioned:
         return
 
@@ -281,8 +280,6 @@ def handle_image_message(event):
     except Exception as e:
         print(f"Failed to save and notify: {e}")
         return
-    
-    # ไม่มีคำสั่ง reply ข้อความใดๆ ในฟังก์ชันรับรูป เพื่อให้บอตทำงานเงียบๆ (Silent Background) อย่างแท้จริง
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
