@@ -110,11 +110,11 @@ def classify_text_message(text_message, sheet_data):
 
     prompt = f"""
 คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot)
-หน้าที่ของคุณคืออ่านข้อความที่สมาชิกในครอบครัวพิมพ์คุยกัน แล้วจัดหมวดหมู่ให้ตรงกับ 1 ใน 6 หมวดนี้เท่านั้น:
+หน้าที่ของคุณคืออ่านข้อความทุกรูปแบบที่สมาชิกในครอบครัวพิมพ์คุยกัน (รวมถึงข้อความที่มีการเมนชั่น @ชื่อคนอื่น) แล้วจัดหมวดหมู่ให้ตรงกับ 1 ใน 6 หมวดนี้เท่านั้น:
 1. อาหารการกิน (เช่น พูดคุยเรื่องเมนูอาหาร, ของกิน, ร้านอาหาร)
 2. สุขภาพ (เช่น อาการเจ็บป่วย, อาการผิดปกติของร่างกาย เช่น หมดแรง, หน้ามืด, ใจสั่น, ไปหาหมอ, ทานยา)
 3. การเดินทาง (เช่น เส้นทาง, การเดินทางกลับ, แผนที่, รถไฟ)
-4. การนัดหมาย/แจ้งเตือน (เช่น นัดหมายล่วงหน้า, เตือนเปิดไฟ, แจ้งเตือนเวลาต่างๆ)
+4. การนัดหมาย/แจ้งเตือน (เช่น นัดหมายล่วงหน้า, เตือนเปิดไฟ, แจ้งเตือนเวลาต่างๆ, ฝากเตือนงานบ้าน)
 5. กิจกรรม (เช่น ทริปท่องเที่ยว, งานเทศกาล, งานสังสรรค์)
 6. บันทึกทั่วไป (ข้อความพูดคุยทักทาย หรือเรื่องอื่นๆ ทั่วไป)
 
@@ -147,16 +147,22 @@ def extract_calendar_event(user_message, current_time_str):
 คุณคือ AI ผู้ช่วยจัดการนัดหมายของครอบครัว ปัจจุบันเวลาอ้างอิงคือ: "{current_time_str}"
 จงตรวจสอบข้อความของผู้ใช้: "{user_message}"
 
-วิเคราะห์ว่าข้อความนี้มีเจตนา "นัดหมาย" หรือ "ตั้งเตือนเวลาทำกิจกรรม" หรือไม่ (เช่น นัดพบหมอ, พรุ่งนี้ล้อหมุน 7 โมง, แจ้งเตือนกินข้าว 18:10, วันจันทร์น้ำมาส่ง)
-- หากใช่: ให้แปลงเป็น JSON Object สำหรับสร้างปฏิทิน (ให้ใช้วันที่ปัจจุบันหรือวันที่ที่ระบุในข้อความ)
-- หากไม่ใช่: ให้ตอบกลับเครื่องหมายปีกกาเปล่าๆ หรือคำว่า null
+วิเคราะห์ว่าข้อความนี้มีเจตนา "นัดหมาย" หรือ "ตั้งเตือนเวลาทำกิจกรรม" หรือไม่ (เช่น นัดพบหมอ, พรุ่งนี้ล้อหมุน 7 โมง, นัดหมาย 18:15 แจ้งเตือนก่อน 4 นาที)
+- หากใช่: ให้แปลงเป็น JSON Object โดยดึงข้อมูลดังนี้:
+  - summary: หัวข้อสั้นๆ ของนัดหมาย (เช่น "กินข้าว", "ไปหาหมอ") โดยตัดข้อความสั่งแจ้งเตือนออก ไม่ให้รวมอยู่ใน summary
+  - start_time: วันที่และเวลาเริ่มต้น (รูปแบบ ISO 8601 เช่น YYYY-MM-DDTHH:MM:00)
+  - end_time: วันที่และเวลาสิ้นสุด (ถ้าไม่มีกำหนด ให้บวกเพิ่มจาก start_time ไป 1 ชั่วโมง)
+  - reminder_minutes: จำนวนนาทีที่ต้องการให้แจ้งเตือนล่วงหน้า (คำนวณจากข้อความ เช่น "ก่อน 4 นาที" = 4, "ก่อนครึ่งชั่วโมง" = 30 ถ้าไม่ระบุให้ค่าเป็น 30)
+  - description: รายละเอียดเพิ่มเติมอื่นๆ
+- หากไม่ใช่: ให้ตอบกลับคำว่า null
 
-ตอบกลับเป็น JSON Object เท่านั้น:
+ตอบกลับเป็น JSON Object เท่านั้น (หรือ null):
 {{
-  "summary": "หัวข้อสั้นๆ ของนัดหมาย",
+  "summary": "...",
   "start_time": "YYYY-MM-DDTHH:MM:00",
   "end_time": "YYYY-MM-DDTHH:MM:00",
-  "description": "รายละเอียดเพิ่มเติม"
+  "reminder_minutes": 30,
+  "description": "..."
 }}
 """
     try:
@@ -181,6 +187,7 @@ def extract_calendar_event(user_message, current_time_str):
 def create_google_calendar_event(event_data):
     try:
         service = get_calendar_service()
+        reminder_mins = int(event_data.get('reminder_minutes', 30))
         event = {
             'summary': event_data.get('summary'),
             'description': event_data.get('description', 'บันทึกโดย Family Bot'),
@@ -195,8 +202,7 @@ def create_google_calendar_event(event_data):
             'reminders': {
                 'useDefault': False,
                 'overrides': [
-                    {'method': 'popup', 'minutes': 1440},  # แจ้งเตือนล่วงหน้า 1 วัน
-                    {'method': 'popup', 'minutes': 30},   # แจ้งเตือนก่อนเวลา 30 นาที
+                    {'method': 'popup', 'minutes': reminder_mins},  # ตั้งเตือนตามเวลาที่ผู้ใช้ระบุ
                 ],
             },
         }
@@ -328,16 +334,17 @@ def handle_text_message(event):
         category = classified.get("category", "บันทึกทั่วไป")
         detail = classified.get("detail", user_message)
 
+        # บันทึกทุกข้อความลง Google Sheets เสมอ (รวมถึงข้อความเมนชั่น @ และข้อความสั่งนัดหมาย)
         save_text_to_google_sheets(date_str, user_name, detail, category)
 
-        # 📅 ตรวจสอบและสร้างลง Google Calendar ครอบครัวอัตโนมัติ
+        # ตรวจสอบว่าเป็นนัดหมายหรือไม่ ถ้าใช่สร้างลง Google Calendar ครอบครัวอัตโนมัติ
         calendar_event = extract_calendar_event(user_message, date_str)
         if calendar_event:
             success = create_google_calendar_event(calendar_event)
             if success and ADMIN_USER_ID:
                 line_bot_api.push_message(
                     ADMIN_USER_ID,
-                    TextSendMessage(text=f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n📌 หัวข้อ: {calendar_event.get('summary')}\n⏰ เริ่ม: {calendar_event.get('start_time')}")
+                    TextSendMessage(text=f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n📌 หัวข้อ: {calendar_event.get('summary')}\n⏰ เริ่ม: {calendar_event.get('start_time')}\n🔔 แจ้งเตือนล่วงหน้า: {calendar_event.get('reminder_minutes')} นาที")
                 )
         return
 
