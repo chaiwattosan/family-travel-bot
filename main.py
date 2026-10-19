@@ -102,16 +102,15 @@ def ask_gemini_agent(user_message, sheet_data):
 
 ข้อความจากผู้ใช้: "{user_message}"
 
-กฎเหล็กสำหรับการค้นหา (Strict Search Rules):
+กฎเหล็กสำหรับการค้นหาและการสั่งการ (Strict Rules):
 1. คำว่า "อากง", "เชฟเทียน" และ "คุณพ่อ" หมายถึงบุคคลเดียวกัน ให้เชื่อมโยงความหมายนี้ในการค้นหาข้อมูลเสมอ
 2. การเทียบเคียงมื้ออาหารตามเวลาที่โพสต์ (คอลัมน์แรก):
    - หากผู้ใช้ถาม "มื้อเช้า" หรือ "อาหารเช้า": ให้หาภาพที่โพสต์ในช่วงเวลา 06:00 - 10:00 น.
    - หากผู้ใช้ถาม "มื้อเที่ยง" หรือ "อาหารเที่ยง": ให้หาภาพที่โพสต์ในช่วงเวลา 10:00 - 14:00 น.
    - หากผู้ใช้ถาม "มื้อเย็น" หรือ "อาหารเย็น": ให้หาภาพที่โพสต์ในช่วงเวลา 15:00 น. เป็นต้นไป
-   - ห้ามดึงภาพมื้ออื่นมาตอบเด็ดขาด หากช่วงเวลานั้นไม่มีการโพสต์ ให้ตอบว่าไม่พบการโพสต์ในเวลาดังกล่าว
-3. หากพบรูปที่ตรงกัน ให้ดึง image_url ออกมา และในการเขียน text_reply ต้องระบุเวลาที่โพสต์รูปนั้นกำกับด้วยเสมอ (เช่น "จากบันทึกเวลา 10:34 น. คือรูป...")
+3. หากพบรูปที่ตรงกัน ให้ดึง image_url ออกมา และในการเขียน text_reply ต้องระบุเวลาที่โพสต์รูปนั้นกำกับด้วยเสมอ
 4. หากในตาราง "ไม่มี" รูปที่สอดคล้อง ให้กำหนด "image_url": null และตอบใน text_reply เช่น "ยังไม่พบรูปภาพหรือข้อมูลเกี่ยวกับช่วงเวลานี้ในระบบครับ"
-5. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม (ที่ไม่ได้เจาะจงค้นหาข้อมูล) ให้เลือก action: "SAVE" ทันที
+5. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม (ที่ไม่ได้เจาะจงค้นหาข้อมูลหรือสั่งสรุป) ให้เลือก action: "SAVE" ทันที
 
 ตอบกลับเป็น JSON Object เท่านั้น:
 {{
@@ -133,16 +132,23 @@ def ask_gemini_agent(user_message, sheet_data):
         print(f"Error querying Gemini: {e}")
         return {"action": "SAVE"}
 
+def save_text_to_google_sheets(date_str, user_name, text_content):
+    try:
+        sheet = get_sheet()
+        # บันทึกข้อความตัวหนังสือลงชีท (คอลัมน์รูปภาพและพรีวิวจะเว้นว่างไว้)
+        row = [date_str, user_name, "ข้อความ / บันทึกทั่วไป", "-", text_content, "", "", ""]
+        sheet.append_row(row, value_input_option='USER_ENTERED')
+        print("Successfully saved text message to Google Sheets!")
+    except Exception as e:
+        print(f"Error saving text to Google Sheets: {e}")
+
 def save_to_google_sheets(date_str, user_name, category, location, detail, image_url):
     try:
         sheet = get_sheet()
-        # ใช้สูตร IMAGE แบบระบุ mode 4 หรือให้เรนเดอร์ผ่าน gspread อย่างถูกต้อง
         preview_formula = f'=IMAGE("{image_url}", 4, 100, 100)' if image_url else ""
         row = [date_str, user_name, category, location, detail, "", preview_formula, image_url]
-        
-        # ใช้ value_input_option='USER_ENTERED' เพื่อให้ Google Sheets แปลงสูตร =IMAGE(...) เป็นรูปภาพทันที
         sheet.append_row(row, value_input_option='USER_ENTERED')
-        print("Successfully saved to Google Sheets!")
+        print("Successfully saved image to Google Sheets!")
 
         if ADMIN_USER_ID:
             notification_text = (
@@ -153,7 +159,6 @@ def save_to_google_sheets(date_str, user_name, category, location, detail, image
                 f"📝 รายละเอียด: {detail}\n"
                 f"⏰ เวลา: {date_str}"
             )
-            # ส่งเฉพาะข้อความแจ้งเตือนตัวหนังสืออย่างเดียว (เอา ImageSendMessage ออก เพื่อไม่ให้ส่งรูปกลับมาหาแอดมิน)
             line_bot_api.push_message(
                 ADMIN_USER_ID,
                 TextSendMessage(text=notification_text)
@@ -181,19 +186,26 @@ def handle_text_message(event):
     user_id = event.source.user_id
     chat_type = event.source.type
     user_message = event.message.text.strip()
-    
-    is_mentioned = "@Bot" in user_message
-    if is_mentioned:
-        user_message = user_message.replace("@Bot", "").strip()
-
-    if chat_type != "user" and not is_mentioned:
-        return
+    date_str = get_thai_time(event.timestamp)
 
     try:
         profile = line_bot_api.get_profile(user_id)
         user_name = profile.display_name
     except Exception:
         user_name = "สมาชิกในครอบครัว"
+
+    # 1. บันทึกข้อความทุกข้อความที่พิมพ์เข้ามาลง Google Sheets ก่อนเสมอ (Background Logging)
+    # ยกเว้นกรณีที่เป็นการเรียกคำสั่ง @Bot เพื่อไม่ให้บอตบันทึกคำสั่งเรียกตัวเองซ้ำซ้อน
+    if not user_message.startswith("@Bot"):
+        save_text_to_google_sheets(date_str, user_name, user_message)
+
+    is_mentioned = "@Bot" in user_message
+    if is_mentioned:
+        user_message = user_message.replace("@Bot", "").strip()
+
+    # ถ้านี่คือ "แชทกลุ่ม" และ "ไม่มีการ @Bot เรียก" บอตจะเงียบสนิท (Silent Mode) แค่เก็บ log อย่างเดียว
+    if chat_type != "user" and not is_mentioned:
+        return
 
     try:
         sheet = get_sheet()
@@ -226,7 +238,7 @@ def handle_text_message(event):
             return
 
     elif action == "SUMMARIZE":
-        reply_txt = analysis.get("text_reply", "สรุปข้อมูลครอบครัว")
+        reply_txt = analysis.get("text_reply", "สรุปข้อมูลการสนทนาวันนี้")
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=reply_txt)
