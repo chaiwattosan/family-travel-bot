@@ -373,4 +373,70 @@ def handle_text_message(event):
 
     if action == "FIND_IMAGE":
         found_url = analysis.get("image_url")
-        reply_txt = analysis.get("text_reply", "ไม่พบรูปภาพที่
+        reply_txt = analysis.get("text_reply", "ไม่พบรูปภาพที่ค้นหาครับ")
+
+        if found_url and str(found_url).startswith("https://res.cloudinary.com"):
+            line_bot_api.reply_message(
+                event.reply_token,
+                [
+                    TextSendMessage(text=reply_txt),
+                    ImageSendMessage(original_content_url=found_url, preview_image_url=found_url)
+                ]
+            )
+            return
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=reply_txt if reply_txt else "ไม่พบรูปภาพตามที่ระบุในบันทึกครับ")
+            )
+            return
+
+    elif action == "SUMMARIZE":
+        reply_txt = analysis.get("text_reply", "สรุปข้อมูลการสนทนาวันนี้")
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply_txt)
+        )
+        return
+
+    reply_txt = analysis.get("text_reply", "รับทราบครับ")
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=reply_txt)
+    )
+    return
+
+@handler.add(MessageEvent, message=ImageMessage)
+def handle_image_message(event):
+    user_id = event.source.user_id
+    date_str = get_thai_time(event.timestamp)
+    
+    user_name = get_user_display_name(user_id)
+
+    unique_filename = f"{event.message.id}_{uuid.uuid4().hex[:8]}.jpg"
+    image_path = os.path.join("/tmp", unique_filename)
+
+    try:
+        message_content = line_bot_api.get_message_content(event.message.id)
+        with open(image_path, 'wb') as fd:
+            for chunk in message_content.iter_content():
+                fd.write(chunk)
+    except Exception as e:
+        print(f"Error downloading image content: {e}")
+        return
+
+    try:
+        upload_result = cloudinary.uploader.upload(image_path, folder="family_bot")
+        image_url = upload_result.get('secure_url')
+    except Exception as e:
+        print(f"Cloudinary upload error: {e}")
+        if os.path.exists(image_path):
+            os.remove(image_path)
+        return
+
+    if os.path.exists(image_path):
+        os.remove(image_path)
+
+    analysis = analyze_image_with_gemini(image_path if os.path.exists(image_path) else None)
+    category = analysis.get("category", "บันทึกทั่วไป")
+    location
