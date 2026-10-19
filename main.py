@@ -24,6 +24,7 @@ LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
 ADMIN_USER_ID = "U4408dd0ab71b56db6074273eb28651b0"
+FAMILY_GROUP_ID = "C..." # ระบบจะใช้ ID ของห้องกลุ่มที่บอตอยู่ หรือส่งเข้ากลุ่มอัตโนมัติ
 FAMILY_CALENDAR_ID = "472254e055528125304e1d3cb80cf50f8cab156a67d12c7eda0c94dfb0c02791@group.calendar.google.com"
 
 cloudinary.config(
@@ -317,12 +318,12 @@ def save_to_google_sheets(date_str, user_name, category, location, detail, image
         print(f"Error saving to Google Sheets or sending notification: {e}")
         raise e
 
-# Background Worker สำหรับคอยเช็กปฏิทินและยิงแจ้งเตือนเข้าห้อง LINE อัตโนมัติทุกๆ 1 นาที
+# Background Worker สำหรับคอยเช็กปฏิทินและยิงแจ้งเตือนเข้าห้องกลุ่ม LINE อัตโนมัติทุกๆ 1 นาที
 def background_calendar_reminder_worker():
     notified_events = set()
     while True:
         try:
-            time.sleep(60) # เช็กทุกๆ 1 นาที
+            time.sleep(60)
             events = get_family_calendar_events()
             now = datetime.now(pytz.timezone('Asia/Bangkok'))
             
@@ -334,13 +335,11 @@ def background_calendar_reminder_worker():
                 event_id = event.get('id')
                 event_start = datetime.fromisoformat(start_str)
                 
-                # ตรวจสอบว่าถึงเวลาแจ้งเตือนล่วงหน้าหรือไม่ (อิงจาก overrides ที่ตั้งไว้ หรือค่าเริ่มต้น 30 นาที)
                 reminders_setting = event.get('reminders', {}).get('overrides', [{'minutes': 30}])
                 reminder_mins = reminders_setting[0].get('minutes', 30) if reminders_setting else 30
                 
                 trigger_time = event_start - timedelta(minutes=reminder_mins)
                 
-                # ถ้าเวลาปัจจุบัน อยู่ในช่วงก่อนถึงเวลานัดหมายตรงกับรอบการแจ้งเตือนพอดี และยังไม่เคยแจ้งเตือน
                 time_diff = (now - trigger_time).total_seconds()
                 if 0 <= time_diff < 70 and event_id not in notified_events:
                     summary = event.get('summary', 'ไม่มีชื่อนัดหมาย')
@@ -353,15 +352,21 @@ def background_calendar_reminder_worker():
                         f"🔔 (แจ้งเตือนล่วงหน้า {reminder_mins} นาที)"
                     )
                     
-                    if ADMIN_USER_ID:
-                        line_bot_api.push_message(ADMIN_USER_ID, TextSendMessage(text=alert_msg))
-                        print(f"Successfully pushed calendar reminder for: {summary}")
+                    target_id = event.get('organizer', {}).get('email') == ADMIN_USER_ID and ADMIN_USER_ID or FAMILY_GROUP_ID
+                    
+                    # ส่งเข้าห้องกลุ่มหรือแชทตามความเหมาะสม (หากมาจากกลุ่ม ให้ส่งเข้ากลุ่ม)
+                    if event.get('description') and "กลุ่ม" in event.get('description', ''):
+                        if FAMILY_GROUP_ID.startswith("C"):
+                            line_bot_api.push_message(FAMILY_GROUP_ID, TextSendMessage(text=alert_msg))
+                    else:
+                        # ส่งเข้าห้องกลุ่มหลักของครอบครัวเพื่อให้ทุกคนเห็นร่วมกัน
+                        if ADMIN_USER_ID:
+                            line_bot_api.push_message(ADMIN_USER_ID, TextSendMessage(text=alert_msg))
                     
                     notified_events.add(event_id)
         except Exception as e:
             print(f"Error in background reminder worker: {e}")
 
-# เริ่มต้นรัน Background Worker ใน Thread แยกต่างหาก
 worker_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
 worker_thread.start()
 
@@ -387,6 +392,11 @@ def handle_text_message(event):
     date_str = get_thai_time()
     user_name = get_user_display_name(user_id)
 
+    # บันทึก Group ID อัตโนมัติเมื่อมีการใช้งานในกลุ่ม
+    global FAMILY_GROUP_ID
+    if chat_type in ["group", "room"]:
+        FAMILY_GROUP_ID = event.source.group_id if chat_type == "group" else event.source.room_id
+
     is_command = user_message.startswith("@Bot") or "สรุป" in user_message or "มีนัด" in user_message or "อะไร" in user_message
 
     if not is_command:
@@ -405,11 +415,12 @@ def handle_text_message(event):
         calendar_event = extract_calendar_event(user_message, date_str)
         if calendar_event:
             success = create_google_calendar_event(calendar_event)
-            if success and ADMIN_USER_ID:
-                line_bot_api.push_message(
-                    ADMIN_USER_ID,
-                    TextSendMessage(text=f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n📌 หัวข้อ: {calendar_event.get('summary')}\n⏰ เริ่ม: {calendar_event.get('start_time')}\n🔔 แจ้งเตือนล่วงหน้า: {calendar_event.get('reminder_minutes')} นาที")
-                )
+            if success:
+                success_msg = f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n📌 หัวข้อ: {calendar_event.get('summary')}\n⏰ เริ่ม: {calendar_event.get('start_time')}\n🔔 แจ้งเตือนล่วงหน้า: {calendar_event.get('reminder_minutes')} นาที"
+                if chat_type in ["group", "room"]:
+                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=success_msg))
+                elif ADMIN_USER_ID:
+                    line_bot_api.push_message(ADMIN_USER_ID, TextSendMessage(text=success_msg))
         return
 
     clean_message = user_message.replace("@Bot", "").strip()
