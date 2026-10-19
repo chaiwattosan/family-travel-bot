@@ -22,6 +22,7 @@ LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
 ADMIN_USER_ID = "U4408dd0ab71b56db6074273eb28651b0"
+FAMILY_CALENDAR_ID = "472254e055528125304e1d3cb80cf50f8cab156a67d12c7eda0c94dfb0c02791@group.calendar.google.com"
 
 cloudinary.config(
     cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME'),
@@ -110,7 +111,7 @@ def classify_text_message(text_message, sheet_data):
 
     prompt = f"""
 คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot)
-หน้าที่ของคุณคืออ่านข้อความทุกรูปแบบที่สมาชิกในครอบครัวพิมพ์คุยกัน (รวมถึงข้อความที่มีการเมนชั่น @ชื่อคนอื่น) แล้วจัดหมวดหมู่ให้ตรงกับ 1 ใน 6 หมวดนี้เท่านั้น:
+หน้าที่ของคุณคืออ่านข้อความทุกรูปแบบที่สมาชิกในครอบครัวพิมพ์คุยกัน แล้วจัดหมวดหมู่ให้ตรงกับ 1 ใน 6 หมวดนี้เท่านั้น:
 1. อาหารการกิน (เช่น พูดคุยเรื่องเมนูอาหาร, ของกิน, ร้านอาหาร)
 2. สุขภาพ (เช่น อาการเจ็บป่วย, อาการผิดปกติของร่างกาย เช่น หมดแรง, หน้ามืด, ใจสั่น, ไปหาหมอ, ทานยา)
 3. การเดินทาง (เช่น เส้นทาง, การเดินทางกลับ, แผนที่, รถไฟ)
@@ -147,12 +148,12 @@ def extract_calendar_event(user_message, current_time_str):
 คุณคือ AI ผู้ช่วยจัดการนัดหมายของครอบครัว ปัจจุบันเวลาอ้างอิงคือ: "{current_time_str}"
 จงตรวจสอบข้อความของผู้ใช้: "{user_message}"
 
-วิเคราะห์ว่าข้อความนี้มีเจตนา "นัดหมาย" หรือ "ตั้งเตือนเวลาทำกิจกรรม" หรือไม่ (เช่น นัดพบหมอ, พรุ่งนี้ล้อหมุน 7 โมง, นัดหมาย 18:15 แจ้งเตือนก่อน 4 นาที)
+วิเคราะห์ว่าข้อความนี้มีเจตนา "นัดหมาย" หรือ "ตั้งเตือนเวลาทำกิจกรรม" หรือไม่ (เช่น นัดพบหมอ, พรุ่งนี้ล้อหมุน 7 โมง, นัดหมาย 18:15 แจ้งเตือนก่อน 4 นาที, พรุ่งนี้ปลดเน็ต)
 - หากใช่: ให้แปลงเป็น JSON Object โดยดึงข้อมูลดังนี้:
-  - summary: หัวข้อสั้นๆ ของนัดหมาย (เช่น "กินข้าว", "ไปหาหมอ") โดยตัดข้อความสั่งแจ้งเตือนออก ไม่ให้รวมอยู่ใน summary
-  - start_time: วันที่และเวลาเริ่มต้น (รูปแบบ ISO 8601 เช่น YYYY-MM-DDTHH:MM:00)
+  - summary: หัวข้อสั้นๆ ของนัดหมาย โดยตัดข้อความสั่งแจ้งเตือนออก
+  - start_time: วันที่และเวลาเริ่มต้น (รูปแบบ ISO 8601 เช่น YYYY-MM-DDTHH:MM:00) ถ้าไม่ระบุเวลาให้กำหนดเป็น 09:00:00
   - end_time: วันที่และเวลาสิ้นสุด (ถ้าไม่มีกำหนด ให้บวกเพิ่มจาก start_time ไป 1 ชั่วโมง)
-  - reminder_minutes: จำนวนนาทีที่ต้องการให้แจ้งเตือนล่วงหน้า (คำนวณจากข้อความ เช่น "ก่อน 4 นาที" = 4, "ก่อนครึ่งชั่วโมง" = 30 ถ้าไม่ระบุให้ค่าเป็น 30)
+  - reminder_minutes: จำนวนนาทีที่ต้องการให้แจ้งเตือนล่วงหน้า (คำนวณจากข้อความ เช่น "ก่อน 4 นาที" = 4, "ก่อน 30 นาที" = 30 ถ้าไม่ระบุให้ค่าเป็น 30)
   - description: รายละเอียดเพิ่มเติมอื่นๆ
 - หากไม่ใช่: ให้ตอบกลับคำว่า null
 
@@ -202,35 +203,54 @@ def create_google_calendar_event(event_data):
             'reminders': {
                 'useDefault': False,
                 'overrides': [
-                    {'method': 'popup', 'minutes': reminder_mins},  # ตั้งเตือนตามเวลาที่ผู้ใช้ระบุ
+                    {'method': 'popup', 'minutes': reminder_mins},
                 ],
             },
         }
-        calendar_id = '472254e055528125304e1d3cb80cf50f8cab156a67d12c7eda0c94dfb0c02791@group.calendar.google.com'
-        created_event = service.events().insert(calendarId=calendar_id, body=event).execute()
+        created_event = service.events().insert(calendarId=FAMILY_CALENDAR_ID, body=event).execute()
         print(f"Event created successfully: {created_event.get('htmlLink')}")
         return True
     except Exception as e:
         print(f"Error creating Google Calendar event: {e}")
         return False
 
-def ask_gemini_agent(user_message, sheet_data):
+def get_family_calendar_events(current_time_str):
+    try:
+        service = get_calendar_service()
+        now = datetime.now(pytz.timezone('Asia/Bangkok'))
+        time_min = now.isoformat()
+        events_result = service.events().list(
+            calendarId=FAMILY_CALENDAR_ID,
+            timeMin=time_min,
+            maxResults=20,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        return events_result.get('items', [])
+    except Exception as e:
+        print(f"Error fetching calendar events: {e}")
+        return []
+
+def ask_gemini_agent(user_message, sheet_data, calendar_events):
     if not gemini_client:
         return {"action": "SAVE"}
 
     prompt = f"""
 คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot) และระบบทำหน้าที่สรุปข้อมูล (Daily Summary Agent)
-หน้าที่ของคุณคือตรวจสอบข้อความของผู้ใช้ โดยอ้างอิงจากข้อมูลใน Google Sheet ที่ให้ไว้อย่างเคร่งครัด
+หน้าที่ของคุณคือตรวจสอบข้อความของผู้ใช้ โดยอ้างอิงจากข้อมูลใน Google Sheet และข้อมูลนัดหมายจากปฏิทินครอบครัวที่ให้ไว้อย่างเคร่งครัด
 
-ข้อมูลใน Google Sheet (เรียงตามลำดับแถว โดยคอลัมน์ A คือ วันที่/เวลา, คอลัมน์ B คือ ผู้ส่ง, คอลัมน์ C คือ หมวดหมู่, คอลัมน์ D คือ สถานที่, คอลัมน์ E คือ รายละเอียด):
+ข้อมูลนัดหมายจากปฏิทินครอบครัว (Google Calendar):
+{json.dumps(calendar_events, ensure_ascii=False, indent=2)}
+
+ข้อมูลใน Google Sheet:
 {json.dumps(sheet_data, ensure_ascii=False, indent=2)}
 
 ข้อความจากผู้ใช้: "{user_message}"
 
 กฎเหล็กสำหรับการค้นหาและการสรุปผล (Strict Rules):
-1. คำว่า "อากง", "เชฟเทียน" และ "คุณพ่อ" หมายถึงบุคคลเดียวกัน ให้เชื่อมโยงความหมายนี้ในการค้นหาข้อมูลเสมอ
-2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน ให้รวบรวมเหตุการณ์ ข้อความสนทนา อาการป่วย และรูปภาพทั้งหมดที่เกิดขึ้นใน "วันปัจจุบัน" มาสรุปเป็นประเด็นสั้นๆ กระชับ แยกตาม 6 หมวดหมู่ พร้อมระบุเวลาและชื่อผู้ส่งให้ชัดเจน
-3. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม ให้เลือก action: "SAVE" ทันที
+1. หากผู้ใช้ถามถึงกำหนดการ นัดหมาย หรือตารางเวลา (เช่น "พรุ่งนี้มีนัดอะไรบ้าง", "มีนัดอะไรบ้าง") ให้ดึงข้อมูลจาก **"ข้อมูลนัดหมายจากปฏิทินครอบครัว"** ด้านบนมาตอบให้ถูกต้องและตรงประเด็นที่สุด
+2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน ให้รวบรวมเหตุการณ์ ข้อความสนทนา อาการป่วย และรูปภาพทั้งหมดมาสรุปแยกตาม 6 หมวดหมู่ พร้อมระบุเวลาและชื่อผู้ส่งให้ชัดเจน
+3. หากเป็นการพูดคุยทั่วไป ให้เลือก action: "SAVE" ทันที
 
 ตอบกลับเป็น JSON Object เท่านั้น:
 {{
@@ -321,7 +341,7 @@ def handle_text_message(event):
     date_str = get_thai_time(event.timestamp)
     user_name = get_user_display_name(user_id)
 
-    is_command = user_message.startswith("@Bot") or "สรุป" in user_message
+    is_command = user_message.startswith("@Bot") or "สรุป" in user_message or "มีนัด" in user_message or "อะไร" in user_message
 
     if not is_command:
         try:
@@ -334,10 +354,8 @@ def handle_text_message(event):
         category = classified.get("category", "บันทึกทั่วไป")
         detail = classified.get("detail", user_message)
 
-        # บันทึกทุกข้อความลง Google Sheets เสมอ (รวมถึงข้อความเมนชั่น @ และข้อความสั่งนัดหมาย)
         save_text_to_google_sheets(date_str, user_name, detail, category)
 
-        # ตรวจสอบว่าเป็นนัดหมายหรือไม่ ถ้าใช่สร้างลง Google Calendar ครอบครัวอัตโนมัติ
         calendar_event = extract_calendar_event(user_message, date_str)
         if calendar_event:
             success = create_google_calendar_event(calendar_event)
@@ -357,7 +375,8 @@ def handle_text_message(event):
         records = []
         print(f"Error loading sheet: {e}")
 
-    analysis = ask_gemini_agent(clean_message, records)
+    calendar_events = get_family_calendar_events(date_str)
+    analysis = ask_gemini_agent(clean_message, records, calendar_events)
     action = analysis.get("action", "SAVE")
 
     if action == "FIND_IMAGE":
@@ -388,6 +407,12 @@ def handle_text_message(event):
         )
         return
 
+    # กรณีถามทั่วไปหรือถามเรื่องนัดหมาย
+    reply_txt = analysis.get("text_reply", "รับทราบครับ")
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=reply_txt)
+    )
     return
 
 @handler.add(MessageEvent, message=ImageMessage)
