@@ -69,12 +69,12 @@ def get_user_display_name(user_id):
 
 def analyze_image_with_gemini(image_path):
     if not gemini_client:
-        return {"category": "รูปภาพความทรงจำ", "location": "-", "detail": "ส่งรูปภาพบันทึกทริป"}
+        return {"category": "บันทึกทั่วไป", "location": "-", "detail": "ส่งรูปภาพบันทึกครอบครัว"}
 
     prompt = (
         "วิเคราะห์รูปภาพนี้สำหรับบันทึกครอบครัว ตอบเป็น JSON Object เท่านั้น:\n"
         "{\n"
-        '  "category": "เลือกหมวดหมู่ให้แม่นยำที่สุดจาก: อาหาร, ที่พัก, สถานที่ท่องเที่ยว, ครอบครัว, แผนที่และเส้นทาง",\n'
+        '  "category": "เลือกหมวดหมู่ให้แม่นยำที่สุดจาก 6 หมวดนี้เท่านั้น: อาหารการกิน, สุขภาพ, การเดินทาง, การนัดหมาย/แจ้งเตือน, กิจกรรม, บันทึกทั่วไป",\n'
         '  "location": "สถานที่หรือร้าน/ที่พัก (ถ้าไม่ทราบใส่ \'-\')",\n'
         '  "detail": "คำอธิบายสิ่งที่เห็นในรูป เช่น อาหารที่ทาน, แผนที่เส้นทาง, หรือบุคคลในภาพ"\n'
         "}"
@@ -96,7 +96,42 @@ def analyze_image_with_gemini(image_path):
         return json.loads(response.text)
     except Exception as e:
         print(f"Error analyzing image with Gemini: {e}")
-        return {"category": "รูปภาพความทรงจำ", "location": "-", "detail": "ส่งรูปภาพบันทึกทริป"}
+        return {"category": "บันทึกทั่วไป", "location": "-", "detail": "ส่งรูปภาพบันทึกครอบครัว"}
+
+def classify_text_message(text_message, sheet_data):
+    if not gemini_client:
+        return {"category": "บันทึกทั่วไป", "detail": text_message}
+
+    prompt = f"""
+คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot)
+หน้าที่ของคุณคืออ่านข้อความที่สมาชิกในครอบครัวพิมพ์คุยกัน แล้วจัดหมวดหมู่ให้ตรงกับ 1 ใน 6 หมวดนี้เท่านั้น:
+1. อาหารการกิน (เช่น พูดคุยเรื่องเมนูอาหาร, ของกิน, ร้านอาหาร)
+2. สุขภาพ (เช่น อาการเจ็บป่วย, อาการผิดปกติของร่างกาย เช่น หมดแรง, หน้ามืด, ใจสั่น, ไปหาหมอ, ทานยา)
+3. การเดินทาง (เช่น เส้นทาง, การเดินทางกลับ, แผนที่, รถไฟ)
+4. การนัดหมาย/แจ้งเตือน (เช่น นัดหมายล่วงหน้า, เตือนเปิดไฟ, แจ้งเตือนเวลาต่างๆ)
+5. กิจกรรม (เช่น ทริปท่องเที่ยว, งานเทศกาล, งานสังสรรค์)
+6. บันทึกทั่วไป (ข้อความพูดคุยทักทาย หรือเรื่องอื่นๆ ทั่วไป)
+
+ข้อความที่ผู้ใช้พิมพ์: "{text_message}"
+
+ตอบกลับเป็น JSON Object เท่านั้น:
+{{
+  "category": "เลือกหนึ่งใน 6 หมวดหมู่ข้างต้น",
+  "detail": "สรุปเนื้อหาหรือข้อความนั้นให้กระชับและเข้าใจง่าย"
+}}
+"""
+    try:
+        response = gemini_client.models.generate_content(
+            model='gemini-3.5-flash-lite',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Error classifying text: {e}")
+        return {"category": "บันทึกทั่วไป", "detail": text_message}
 
 def ask_gemini_agent(user_message, sheet_data):
     if not gemini_client:
@@ -113,7 +148,7 @@ def ask_gemini_agent(user_message, sheet_data):
 
 กฎเหล็กสำหรับการค้นหาและการสรุปผล (Strict Rules):
 1. คำว่า "อากง", "เชฟเทียน" และ "คุณพ่อ" หมายถึงบุคคลเดียวกัน ให้เชื่อมโยงความหมายนี้ในการค้นหาข้อมูลเสมอ
-2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน (เช่น "สรุปวันนี้ให้หน่อย มีอะไรบ้าง") ให้รวบรวมเหตุการณ์ ข้อความสนทนา และรูปภาพทั้งหมดที่เกิดขึ้นใน "วันปัจจุบัน" มาสรุปเป็นประเด็นสั้นๆ กระชับ และอ่านง่าย แยกตามช่วงเวลา พร้อมระบุว่าใครเป็นคนส่งหรือบันทึกข้อมูลนั้น
+2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน (เช่น "สรุปวันนี้ให้หน่อย มีอะไรบ้าง") ให้รวบรวมเหตุการณ์ ข้อความสนทนา อาการป่วย และรูปภาพทั้งหมดที่เกิดขึ้นใน "วันปัจจุบัน" มาสรุปเป็นประเด็นสั้นๆ กระชับ แยกตามหมวดหมู่ (เช่น อาหารการกิน, สุขภาพ, กิจกรรม ฯลฯ) พร้อมระบุเวลาและชื่อผู้ส่งให้ชัดเจน
 3. หากผู้ใช้ถามหารูปภาพมื้ออาหารตามเวลา ให้เทียบเคียงช่วงเวลาที่โพสต์ให้ถูกต้อง (เช้า 06:00-10:00, เที่ยง 10:00-14:00, เย็น 15:00 เป็นต้นไป) และระบุเวลาที่โพสต์กำกับ
 4. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม ให้เลือก action: "SAVE" ทันที
 
@@ -137,10 +172,10 @@ def ask_gemini_agent(user_message, sheet_data):
         print(f"Error querying Gemini: {e}")
         return {"action": "SAVE"}
 
-def save_text_to_google_sheets(date_str, user_name, text_content):
+def save_text_to_google_sheets(date_str, user_name, text_content, category):
     try:
         sheet = get_sheet()
-        row = [date_str, user_name, "ข้อความ / บันทึกทั่วไป", "-", text_content, "", "", ""]
+        row = [date_str, user_name, category, "-", text_content, "", "", ""]
         sheet.append_row(row, value_input_option='USER_ENTERED')
         print("Successfully saved text message to Google Sheets!")
 
@@ -148,6 +183,7 @@ def save_text_to_google_sheets(date_str, user_name, text_content):
             notification_text = (
                 f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
                 f"👤 ผู้ส่ง: {user_name}\n"
+                f"📂 หมวดหมู่: {category}\n"
                 f"💬 ข้อความ: {text_content}\n"
                 f"⏰ เวลา: {date_str}"
             )
@@ -206,15 +242,25 @@ def handle_text_message(event):
 
     user_name = get_user_display_name(user_id)
 
-    if not user_message.startswith("@Bot"):
-        save_text_to_google_sheets(date_str, user_name, user_message)
-
     is_mentioned = "@Bot" in user_message
-    if is_mentioned:
-        user_message = user_message.replace("@Bot", "").strip()
 
-    if chat_type != "user" and not is_mentioned:
+    if not is_mentioned:
+        # ให้ AI ช่วยวิเคราะห์จัดหมวดหมู่ข้อความตัวหนังสือลง 6 หมวด
+        try:
+            sheet = get_sheet()
+            records = sheet.get_all_values()
+        except Exception:
+            records = []
+            
+        classified = classify_text_message(user_message, records)
+        category = classified.get("category", "บันทึกทั่วไป")
+        detail = classified.get("detail", user_message)
+
+        save_text_to_google_sheets(date_str, user_name, detail, category)
         return
+
+    # กรณีที่มีการ @Bot เรียกใช้งาน
+    clean_message = user_message.replace("@Bot", "").strip()
 
     try:
         sheet = get_sheet()
@@ -223,7 +269,7 @@ def handle_text_message(event):
         records = []
         print(f"Error loading sheet: {e}")
 
-    analysis = ask_gemini_agent(user_message, records)
+    analysis = ask_gemini_agent(clean_message, records)
     action = analysis.get("action", "SAVE")
 
     if action == "FIND_IMAGE":
@@ -288,7 +334,7 @@ def handle_image_message(event):
         os.remove(image_path)
 
     analysis = analyze_image_with_gemini(image_path if os.path.exists(image_path) else None)
-    category = analysis.get("category", "รูปภาพความทรงจำ")
+    category = analysis.get("category", "บันทึกทั่วไป")
     location = analysis.get("location", "-")
     detail = analysis.get("detail", "บันทึกภาพถ่ายครอบครัว")
 
