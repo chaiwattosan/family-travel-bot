@@ -150,7 +150,7 @@ def extract_calendar_event(user_message, current_time_str):
         "  - summary: หัวข้อสั้นๆ ของนัดหมาย โดยตัดข้อความสั่งแจ้งเตือนออก\n"
         "  - start_time: วันที่และเวลาเริ่มต้น (รูปแบบ ISO 8601 เช่น YYYY-MM-DDTHH:MM:00) ถ้าไม่ระบุเวลาให้กำหนดเป็น 09:00:00\n"
         "  - end_time: วันที่และเวลาสิ้นสุด (ถ้าไม่มีกำหนด ให้บวกเพิ่มจาก start_time ไป 1 ชั่วโมง)\n"
-        "  - reminder_minutes: จำนวนนาทีที่ต้องการให้แจ้งเตือนล่วงหน้า (เช่น ก่อน 15 นาที = 15, ก่อน 30 นาที = 30 ถ้าไม่ระบุให้ค่าเป็น 30)\n"
+        "  - reminder_minutes: จำนวนนาทีที่ต้องการให้แจ้งเตือนล่วงหน้า (เช่น ก่อน 5 นาที = 5, ก่อน 15 นาที = 15, ก่อน 30 นาที = 30 ถ้าไม่ระบุให้ค่าเป็น 30)\n"
         "  - description: รายละเอียดเพิ่มเติมอื่นๆ\n"
         "- หากไม่ใช่: ให้ตอบกลับคำว่า null\n\n"
         "ตอบกลับเป็น JSON Object เท่านั้น (หรือ null):\n"
@@ -200,6 +200,7 @@ def create_google_calendar_event(event_data):
                 'useDefault': False,
                 'overrides': [
                     {'method': 'popup', 'minutes': reminder_mins},
+                    {'method': 'email', 'minutes': reminder_mins}
                 ],
             },
         }
@@ -439,4 +440,14 @@ def handle_image_message(event):
 
     analysis = analyze_image_with_gemini(image_path if os.path.exists(image_path) else None)
     category = analysis.get("category", "บันทึกทั่วไป")
-    location
+    location = analysis.get("location", "-")
+    detail = analysis.get("detail", "บันทึกภาพถ่ายครอบครัว")
+
+    try:
+        save_to_google_sheets(date_str, user_name, category, location, detail, image_url)
+    except Exception as e:
+        print(f"Failed to save and notify: {e}")
+        return
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
