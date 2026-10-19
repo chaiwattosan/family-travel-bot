@@ -1,5 +1,6 @@
 import os
 import json
+import uuid
 from datetime import datetime
 import pytz
 from flask import Flask, request, abort
@@ -19,7 +20,6 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
-# LINE User ID ของคุณสำหรับรับการแจ้งเตือนส่วนตัว
 ADMIN_USER_ID = "U4408dd0ab71b56db6074273eb28651b0"
 
 cloudinary.config(
@@ -67,7 +67,7 @@ def analyze_image_with_gemini(image_path):
         "{\n"
         '  "category": "หมวดหมู่หลัก เช่น อาหาร, ที่พัก, สถานที่ท่องเที่ยว, ครอบครัว",\n'
         '  "location": "สถานที่หรือร้าน/ที่พัก (ถ้าไม่ทราบใส่ \'-\')",\n'
-        '  "detail": "คำอธิบายสิ่งที่เห็นในรูป 1 ประโยค เช่น ทานชุดอาหารขันโตก หรือ ห้องนอนเตียงคู่"\n'
+        '  "detail": "คำอธิบายสิ่งที่เห็นในรูป โดยระบุบุคคลในภาพ เช่น คุณพ่อ หรือ อากง (ถ้ามี) และกิจกรรมที่ทำ"\n'
         "}"
     )
     try:
@@ -103,13 +103,11 @@ def ask_gemini_agent(user_message, sheet_data):
 ข้อความจากผู้ใช้: "{user_message}"
 
 กฎเหล็กสำหรับการค้นหา (Strict Search Rules):
-1. ห้ามเดาหรือจินตนาการข้อมูลที่ไม่มีอยู่จริงในตารางเด็ดขาด
-2. หากผู้ใช้ต้องการค้นหารูปภาพ (action: "FIND_IMAGE"):
-   - ให้ทำการ "ตีความและเทียบเคียงความหมาย" (Semantic Matching) เช่น ถ้าผู้ใช้หา "อาหารเช้า" หรือ "มื้อเช้า" ให้ตรวจดูแถวที่มีหมวดหมู่ "อาหาร" หรือรายละเอียดที่เกี่ยวข้องกับการทานอาหาร แม้คำจะไม่ตรงกันเป๊ะก็ตาม
-   - หากพบรูปที่ใกล้เคียงที่สุด ให้ดึง image_url ออกมา และเขียนข้อความอธิบายใน text_reply
-   - หากในตาราง "ไม่มี" รูปที่สอดคล้องเลย ให้กำหนด "image_url": null และตอบใน text_reply เช่น "ยังไม่พบรูปภาพเกี่ยวกับสิ่งที่หาในระบบครับ"
-3. หากผู้ใช้ขอให้สรุป (action: "SUMMARIZE"): สรุปเฉพาะสิ่งที่มีบันทึกไว้ในตารางเท่านั้น
-4. หากเป็นการพูดคุยทั่วไปหรือบอกเล่าเพื่อจดบันทึก ให้เลือก action: "SAVE"
+1. คำว่า "อากง" "เชพเทียน" และ "คุณพ่อ" หมายถึงบุคคลเดียวกัน ให้เชื่อมโยงความหมายนี้ในการค้นหาข้อมูลเสมอ
+2. ให้ทำการ "ตีความและเทียบเคียงความหมาย" (Semantic Matching) เช่น ถ้าผู้ใช้หา "อาหารเช้า" ให้เทียบเคียงกับหมวดหมู่ "อาหาร" หรือช่วงเวลาเช้าในตาราง
+3. หากพบรูปที่ใกล้เคียงที่สุด ให้ดึง image_url ออกมา และเขียนข้อความอธิบายใน text_reply
+4. หากในตาราง "ไม่มี" รูปที่สอดคล้อง ให้กำหนด "image_url": null และตอบใน text_reply เช่น "ยังไม่พบรูปภาพหรือข้อมูลเกี่ยวกับเรื่องนี้ในระบบครับ"
+5. หากเป็นการพูดคุยทั่วไปหรือบอกเล่าเพื่อจดบันทึก ให้เลือก action: "SAVE"
 
 ตอบกลับเป็น JSON Object เท่านั้น:
 {{
@@ -134,7 +132,6 @@ def ask_gemini_agent(user_message, sheet_data):
 def save_to_google_sheets(date_str, user_name, category, location, detail, image_url):
     try:
         sheet = get_sheet()
-        # ใช้สูตร IMAGE มาตรฐานเพื่อให้ Google Sheet เรนเดอร์รูปภาพพรีวิวขนาดเล็กได้ทันที
         preview_formula = f'=IMAGE("{image_url}")' if image_url else ""
         row = [date_str, user_name, category, location, detail, "", preview_formula, image_url]
         sheet.append_row(row)
@@ -180,7 +177,6 @@ def handle_text_message(event):
     chat_type = event.source.type
     user_message = event.message.text.strip()
     
-    # ตัดชื่อ mention ออกถ้ามีการเรียกบอตในกลุ่ม
     if "@Bot" in user_message:
         user_message = user_message.replace("@Bot", "").strip()
 
@@ -247,20 +243,33 @@ def handle_image_message(event):
     except Exception:
         user_name = "สมาชิกในครอบครัว"
 
-    message_content = line_bot_api.get_message_content(event.message.id)
-    image_path = f"/tmp/{event.message.id}.jpg"
-    with open(image_path, 'wb') as fd:
-        for chunk in message_content.iter_content():
-            fd.write(chunk)
+    # ใช้ UUID สร้างชื่อไฟล์ชั่วคราวแบบไม่ซ้ำกัน ป้องกันรูปชนกันเวลาส่งหลายรูปพร้อมๆ กัน
+    unique_filename = f"{event.message.id}_{uuid.uuid4().hex[:8]}.jpg"
+    image_path = os.path.join("/tmp", unique_filename)
+
+    try:
+        message_content = line_bot_api.get_message_content(event.message.id)
+        with open(image_path, 'wb') as fd:
+            for chunk in message_content.iter_content():
+                fd.write(chunk)
+    except Exception as e:
+        print(f"Error downloading image content: {e}")
+        return
 
     try:
         upload_result = cloudinary.uploader.upload(image_path, folder="family_bot")
         image_url = upload_result.get('secure_url')
     except Exception as e:
         print(f"Cloudinary upload error: {e}")
+        if os.path.exists(image_path):
+            os.remove(image_path)
         return
 
-    analysis = analyze_image_with_gemini(image_path)
+    # ลบไฟล์ชั่วคราวทิ้งทันทีหลังอัปโหลดเสร็จเพื่อประหยัดพื้นที่
+    if os.path.exists(image_path):
+        os.remove(image_path)
+
+    analysis = analyze_image_with_gemini(image_path if os.path.exists(image_path) else None)
     category = analysis.get("category", "รูปภาพความทรงจำ")
     location = analysis.get("location", "-")
     detail = analysis.get("detail", "บันทึกภาพถ่ายครอบครัว")
