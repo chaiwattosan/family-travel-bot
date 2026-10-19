@@ -58,6 +58,15 @@ def get_thai_time(timestamp_ms):
     dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz)
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
+def get_user_display_name(user_id):
+    try:
+        profile = line_bot_api.get_profile(user_id)
+        if profile and profile.display_name:
+            return profile.display_name
+    except Exception as e:
+        print(f"Could not get profile name for {user_id}: {e}")
+    return "สมาชิกในครอบครัว"
+
 def analyze_image_with_gemini(image_path):
     if not gemini_client:
         return {"category": "รูปภาพความทรงจำ", "location": "-", "detail": "ส่งรูปภาพบันทึกทริป"}
@@ -94,23 +103,19 @@ def ask_gemini_agent(user_message, sheet_data):
         return {"action": "SAVE"}
 
     prompt = f"""
-คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot)
+คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot) และระบบทำหน้าที่สรุปข้อมูล (Daily Summary Agent)
 หน้าที่ของคุณคือตรวจสอบข้อความของผู้ใช้ โดยอ้างอิงจากข้อมูลใน Google Sheet ที่ให้ไว้อย่างเคร่งครัด
 
-ข้อมูลใน Google Sheet (เรียงตามลำดับแถว โดยคอลัมน์แรกคือ วันที่และเวลาที่โพสต์):
+ข้อมูลใน Google Sheet (เรียงตามลำดับแถว โดยคอลัมน์ A คือ วันที่/เวลา, คอลัมน์ B คือ ผู้ส่ง, คอลัมน์ C คือ หมวดหมู่, คอลัมน์ D คือ สถานที่, คอลัมน์ E คือ รายละเอียด):
 {json.dumps(sheet_data, ensure_ascii=False, indent=2)}
 
 ข้อความจากผู้ใช้: "{user_message}"
 
-กฎเหล็กสำหรับการค้นหาและการสั่งการ (Strict Rules):
+กฎเหล็กสำหรับการค้นหาและการสรุปผล (Strict Rules):
 1. คำว่า "อากง", "เชฟเทียน" และ "คุณพ่อ" หมายถึงบุคคลเดียวกัน ให้เชื่อมโยงความหมายนี้ในการค้นหาข้อมูลเสมอ
-2. การเทียบเคียงมื้ออาหารตามเวลาที่โพสต์ (คอลัมน์แรก):
-   - หากผู้ใช้ถาม "มื้อเช้า" หรือ "อาหารเช้า": ให้หาภาพที่โพสต์ในช่วงเวลา 06:00 - 10:00 น.
-   - หากผู้ใช้ถาม "มื้อเที่ยง" หรือ "อาหารเที่ยง": ให้หาภาพที่โพสต์ในช่วงเวลา 10:00 - 14:00 น.
-   - หากผู้ใช้ถาม "มื้อเย็น" หรือ "อาหารเย็น": ให้หาภาพที่โพสต์ในช่วงเวลา 15:00 น. เป็นต้นไป
-3. หากพบรูปที่ตรงกัน ให้ดึง image_url ออกมา และในการเขียน text_reply ต้องระบุเวลาที่โพสต์รูปนั้นกำกับด้วยเสมอ
-4. หากในตาราง "ไม่มี" รูปที่สอดคล้อง ให้กำหนด "image_url": null และตอบใน text_reply เช่น "ยังไม่พบรูปภาพหรือข้อมูลเกี่ยวกับช่วงเวลานี้ในระบบครับ"
-5. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม ให้เลือก action: "SAVE" ทันที
+2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน (เช่น "สรุปวันนี้ให้หน่อย มีอะไรบ้าง") ให้รวบรวมเหตุการณ์ ข้อความสนทนา และรูปภาพทั้งหมดที่เกิดขึ้นใน "วันปัจจุบัน" มาสรุปเป็นประเด็นสั้นๆ กระชับ และอ่านง่าย แยกตามช่วงเวลา พร้อมระบุว่าใครเป็นคนส่งหรือบันทึกข้อมูลนั้น
+3. หากผู้ใช้ถามหารูปภาพมื้ออาหารตามเวลา ให้เทียบเคียงช่วงเวลาที่โพสต์ให้ถูกต้อง (เช้า 06:00-10:00, เที่ยง 10:00-14:00, เย็น 15:00 เป็นต้นไป) และระบุเวลาที่โพสต์กำกับ
+4. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม ให้เลือก action: "SAVE" ทันที
 
 ตอบกลับเป็น JSON Object เท่านั้น:
 {{
@@ -139,7 +144,6 @@ def save_text_to_google_sheets(date_str, user_name, text_content):
         sheet.append_row(row, value_input_option='USER_ENTERED')
         print("Successfully saved text message to Google Sheets!")
 
-        # 🔔 แจ้งเตือนข้อความเข้าในช่วง Training Phase
         if ADMIN_USER_ID:
             notification_text = (
                 f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
@@ -200,11 +204,7 @@ def handle_text_message(event):
     user_message = event.message.text.strip()
     date_str = get_thai_time(event.timestamp)
 
-    try:
-        profile = line_bot_api.get_profile(user_id)
-        user_name = profile.display_name
-    except Exception:
-        user_name = "สมาชิกในครอบครัว"
+    user_name = get_user_display_name(user_id)
 
     if not user_message.startswith("@Bot"):
         save_text_to_google_sheets(date_str, user_name, user_message)
@@ -261,11 +261,7 @@ def handle_image_message(event):
     user_id = event.source.user_id
     date_str = get_thai_time(event.timestamp)
     
-    try:
-        profile = line_bot_api.get_profile(user_id)
-        user_name = profile.display_name
-    except Exception:
-        user_name = "สมาชิกในครอบครัว"
+    user_name = get_user_display_name(user_id)
 
     unique_filename = f"{event.message.id}_{uuid.uuid4().hex[:8]}.jpg"
     image_path = os.path.join("/tmp", unique_filename)
