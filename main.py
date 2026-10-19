@@ -145,7 +145,7 @@ def extract_calendar_event(user_message, current_time_str):
 
     prompt = f"""
 คุณคือ AI ผู้ช่วยจัดการนัดหมายของครอบครัว ปัจจุบันเวลาอ้างอิงคือ: "{current_time_str}"
-จงตรวจสอบข้อความของ,ผู้ใช้: "{user_message}"
+จงตรวจสอบข้อความของผู้ใช้: "{user_message}"
 หากข้อความนี้เป็นการนัดหมาย หรือการแจ้งเตือนเวลา (เช่น นัดพบหมอ, พรุ่งนี้ล้อหมุน 7 โมง, วันจันทร์น้ำมาส่ง, อย่าลืมเปิดไฟทุ่มนึง) ให้ดึงข้อมูลออกมาเป็น JSON Object สำหรับสร้างปฏิทิน:
 - summary: หัวข้อการนัดหมาย/แจ้งเตือน
 - start_time: วันที่และเวลาเริ่มต้น (รูปแบบ ISO 8601 เช่น YYYY-MM-DDTHH:MM:00) ถ้าไม่ระบุเวลาให้กำหนดเป็น 08:00:00
@@ -195,7 +195,7 @@ def create_google_calendar_event(event_data):
             'reminders': {
                 'useDefault': False,
                 'overrides': [
-                    {'method': 'popup', 'minutes': 1440},  # แจ้งเตือนล่วงหน้า 1 วัน (1440 นาที)
+                    {'method': 'popup', 'minutes': 1440},  # แจ้งเตือนล่วงหน้า 1 วัน
                     {'method': 'popup', 'minutes': 30},   # แจ้งเตือนก่อนเวลา 30 นาที
                 ],
             },
@@ -223,7 +223,7 @@ def ask_gemini_agent(user_message, sheet_data):
 
 กฎเหล็กสำหรับการค้นหาและการสรุปผล (Strict Rules):
 1. คำว่า "อากง", "เชฟเทียน" และ "คุณพ่อ" หมายถึงบุคคลเดียวกัน ให้เชื่อมโยงความหมายนี้ในการค้นหาข้อมูลเสมอ
-2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน (เช่น พิมพ์ว่า "สรุปวันนี้ให้หน่อย", "วันนี้มีอะไรบ้าง") ให้รวบรวมเหตุการณ์ ข้อความสนทนา อาการป่วย และรูปภาพทั้งหมดที่เกิดขึ้นใน "วันปัจจุบัน" มาสรุปเป็นประเด็นสั้นๆ กระชับ แยกตาม 6 หมวดหมู่ (อาหารการกิน, สุขภาพ, การเดินทาง, การนัดหมาย/แจ้งเตือน, กิจกรรม, บันทึกทั่วไป) พร้อมระบุเวลาและชื่อผู้ส่งให้ชัดเจน
+2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน (เช่น พิมพ์ว่า "สรุปวันนี้ให้หน่อย", "วันนี้มีอะไรบ้าง") ให้รวบรวมเหตุการณ์ ข้อความสนทนา อาการป่วย และรูปภาพทั้งหมดที่เกิดขึ้นใน "วันปัจจุบัน" มาสรุปเป็นประเด็นสั้นๆ กระชับ แยกตาม 6 หมวดหมู่ พร้อมระบุเวลาและชื่อผู้ส่งให้ชัดเจน
 3. หากผู้ใช้ถามหารูปภาพมื้ออาหารตามเวลา ให้เทียบเคียงช่วงเวลาที่โพสต์ให้ถูกต้อง (เช้า 06:00-10:00, เที่ยง 10:00-14:00, เย็น 15:00 เป็นต้นไป) และระบุเวลาที่โพสต์กำกับ
 4. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม ให้เลือก action: "SAVE" ทันที
 
@@ -329,10 +329,9 @@ def handle_text_message(event):
         category = classified.get("category", "บันทึกทั่วไป")
         detail = classified.get("detail", user_message)
 
-        # บันทึกลง Google Sheets ตามปกติ
         save_text_to_google_sheets(date_str, user_name, detail, category)
 
-        # 📅 ตรวจสอบเพิ่มเติม: ถือว่าเป็นนัดหมายหรือไม่ ถ้าใช่ให้สร้างลง Google Calendar อัตโนมัติ
+        # ตรวจสอบว่าเป็นนัดหมายหรือไม่ ถ้าใช่สร้างลง Google Calendar อัตโนมัติ
         calendar_event = extract_calendar_event(user_message, date_str)
         if calendar_event:
             success = create_google_calendar_event(calendar_event)
@@ -388,44 +387,4 @@ def handle_text_message(event):
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
     user_id = event.source.user_id
-    date_str = get_thai_time(event.timestamp)
-    
-    user_name = get_user_display_name(user_id)
-
-    unique_filename = f"{event.message.id}_{uuid.uuid4().hex[:8]}.jpg"
-    image_path = os.path.join("/tmp", unique_filename)
-
-    try:
-        message_content = line_bot_api.get_message_content(event.message.id)
-        with open(image_path, 'wb'] as fd:
-            for chunk in message_content.iter_content():
-                fd.write(chunk)
-    except Exception as e:
-        print(f"Error downloading image content: {e}")
-        return
-
-    try:
-        upload_result = cloudinary.uploader.upload(image_path, folder="family_bot")
-        image_url = upload_result.get('secure_url')
-    except Exception as e:
-        print(f"Cloudinary upload error: {e}")
-        if os.path.exists(image_path):
-            os.remove(image_path)
-        return
-
-    if os.path.exists(image_path):
-        os.remove(image_path)
-
-    analysis = analyze_image_with_gemini(image_path if os.path.exists(image_path) else None)
-    category = analysis.get("category", "บันทึกทั่วไป")
-    location = analysis.get("location", "-")
-    detail = analysis.get("detail", "บันทึกภาพถ่ายครอบครัว")
-
-    try:
-        save_to_google_sheets(date_str, user_name, category, location, detail, image_url)
-    except Exception as e:
-        print(f"Failed to save and notify: {e}")
-        return
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    date_str = get_thai
