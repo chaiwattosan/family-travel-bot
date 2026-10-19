@@ -14,6 +14,8 @@ from google.genai import types
 import cloudinary
 import cloudinary.uploader
 from googleapiclient.discovery import build
+import threading
+import time
 
 app = Flask(__name__)
 
@@ -60,9 +62,12 @@ def get_calendar_service():
     creds = get_google_credentials()
     return build('calendar', 'v3', credentials=creds)
 
-def get_thai_time(timestamp_ms):
+def get_thai_time(timestamp_ms=None):
     tz = pytz.timezone('Asia/Bangkok')
-    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz)
+    if timestamp_ms:
+        dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz)
+    else:
+        dt = datetime.now(tz)
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 def get_user_display_name(user_id):
@@ -150,7 +155,7 @@ def extract_calendar_event(user_message, current_time_str):
         "  - summary: หัวข้อสั้นๆ ของนัดหมาย โดยตัดข้อความสั่งแจ้งเตือนออก\n"
         "  - start_time: วันที่และเวลาเริ่มต้น (รูปแบบ ISO 8601 เช่น YYYY-MM-DDTHH:MM:00) ถ้าไม่ระบุเวลาให้กำหนดเป็น 09:00:00\n"
         "  - end_time: วันที่และเวลาสิ้นสุด (ถ้าไม่มีกำหนด ให้บวกเพิ่มจาก start_time ไป 1 ชั่วโมง)\n"
-        "  - reminder_minutes: จำนวนนาทีที่ต้องการให้แจ้งเตือนล่วงหน้า (เช่น ก่อน 5 นาที = 5, ก่อน 15 นาที = 15, ก่อน 30 นาที = 30 ถ้าไม่ระบุให้ค่าเป็น 30)\n"
+        "  - reminder_minutes: จำนวนนาทีที่ต้องการให้แจ้งเตือนล่วงหน้า (เช่น ก่อน 3 นาที = 3, ก่อน 5 นาที = 5, ก่อน 15 นาที = 15, ก่อน 30 นาที = 30 ถ้าไม่ระบุให้ค่าเป็น 30)\n"
         "  - description: รายละเอียดเพิ่มเติมอื่นๆ\n"
         "- หากไม่ใช่: ให้ตอบกลับคำว่า null\n\n"
         "ตอบกลับเป็น JSON Object เท่านั้น (หรือ null):\n"
@@ -312,6 +317,54 @@ def save_to_google_sheets(date_str, user_name, category, location, detail, image
         print(f"Error saving to Google Sheets or sending notification: {e}")
         raise e
 
+# Background Worker สำหรับคอยเช็กปฏิทินและยิงแจ้งเตือนเข้าห้อง LINE อัตโนมัติทุกๆ 1 นาที
+def background_calendar_reminder_worker():
+    notified_events = set()
+    while True:
+        try:
+            time.sleep(60) # เช็กทุกๆ 1 นาที
+            events = get_family_calendar_events()
+            now = datetime.now(pytz.timezone('Asia/Bangkok'))
+            
+            for event in events:
+                start_str = event.get('start', {}).get('dateTime')
+                if not start_str:
+                    continue
+                
+                event_id = event.get('id')
+                event_start = datetime.fromisoformat(start_str)
+                
+                # ตรวจสอบว่าถึงเวลาแจ้งเตือนล่วงหน้าหรือไม่ (อิงจาก overrides ที่ตั้งไว้ หรือค่าเริ่มต้น 30 นาที)
+                reminders_setting = event.get('reminders', {}).get('overrides', [{'minutes': 30}])
+                reminder_mins = reminders_setting[0].get('minutes', 30) if reminders_setting else 30
+                
+                trigger_time = event_start - timedelta(minutes=reminder_mins)
+                
+                # ถ้าเวลาปัจจุบัน อยู่ในช่วงก่อนถึงเวลานัดหมายตรงกับรอบการแจ้งเตือนพอดี และยังไม่เคยแจ้งเตือน
+                time_diff = (now - trigger_time).total_seconds()
+                if 0 <= time_diff < 70 and event_id not in notified_events:
+                    summary = event.get('summary', 'ไม่มีชื่อนัดหมาย')
+                    start_time_formatted = event_start.strftime('%H:%M น.')
+                    
+                    alert_msg = (
+                        f"🚨 **แจ้งเตือนนัดหมายครอบครัว!**\n\n"
+                        f"📌 เรื่อง: {summary}\n"
+                        f"⏰ เวลาเริ่ม: {start_time_formatted}\n"
+                        f"🔔 (แจ้งเตือนล่วงหน้า {reminder_mins} นาที)"
+                    )
+                    
+                    if ADMIN_USER_ID:
+                        line_bot_api.push_message(ADMIN_USER_ID, TextSendMessage(text=alert_msg))
+                        print(f"Successfully pushed calendar reminder for: {summary}")
+                    
+                    notified_events.add(event_id)
+        except Exception as e:
+            print(f"Error in background reminder worker: {e}")
+
+# เริ่มต้นรัน Background Worker ใน Thread แยกต่างหาก
+worker_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
+worker_thread.start()
+
 @app.route("/")
 def index():
     return "Family Travel Bot is running!"
@@ -331,7 +384,7 @@ def handle_text_message(event):
     user_id = event.source.user_id
     chat_type = event.source.type
     user_message = event.message.text.strip()
-    date_str = get_thai_time(event.timestamp)
+    date_str = get_thai_time()
     user_name = get_user_display_name(user_id)
 
     is_command = user_message.startswith("@Bot") or "สรุป" in user_message or "มีนัด" in user_message or "อะไร" in user_message
@@ -410,7 +463,7 @@ def handle_text_message(event):
 @handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
     user_id = event.source.user_id
-    date_str = get_thai_time(event.timestamp)
+    date_str = get_thai_time()
     
     user_name = get_user_display_name(user_id)
 
