@@ -139,7 +139,6 @@ def save_to_google_sheets(date_str, user_name, category, location, detail, image
         sheet.append_row(row)
         print("Successfully saved to Google Sheets!")
 
-        # ส่ง Push Notification แจ้งเตือนแอดมินส่วนตัวทันที
         if ADMIN_USER_ID:
             notification_text = (
                 f"🚨 **แจ้งเตือนการบันทึกภาพใหม่**\n\n"
@@ -158,6 +157,7 @@ def save_to_google_sheets(date_str, user_name, category, location, detail, image
             )
     except Exception as e:
         print(f"Error saving to Google Sheets or sending notification: {e}")
+        raise e  # ส่ง Error ออกไปให้เห็นชัดๆ ใน Log ถ้าบันทึกชีทไม่สำเร็จ
 
 @app.route("/")
 def index():
@@ -176,9 +176,13 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     user_id = event.source.user_id
-    chat_type = event.source.type  # เช็คว่าเป็น 'user' (1-1) หรือ 'group'/'room'
+    chat_type = event.source.type
     user_message = event.message.text.strip()
     
+    # ตัดชื่อ mention ออกถ้ามีการเรียกบอตในกลุ่ม
+    if "@Bot" in user_message:
+        user_message = user_message.replace("@Bot", "").strip()
+
     try:
         profile = line_bot_api.get_profile(user_id)
         user_name = profile.display_name
@@ -223,7 +227,6 @@ def handle_text_message(event):
         )
         return
 
-    # ถ้าคุยส่วนตัว 1-1 แล้วพิมพ์ข้อความทั่วไป ให้บอตตอบรับยืนยันว่าพร้อมรับคำสั่งหรือทดสอบ
     if chat_type == "user":
         line_bot_api.reply_message(
             event.reply_token,
@@ -256,16 +259,17 @@ def handle_image_message(event):
         print(f"Cloudinary upload error: {e}")
         return
 
-    # ให้ Gemini วิเคราะห์รูปภาพ
     analysis = analyze_image_with_gemini(image_path)
     category = analysis.get("category", "รูปภาพความทรงจำ")
     location = analysis.get("location", "-")
     detail = analysis.get("detail", "บันทึกภาพถ่ายครอบครัว")
 
-    # บันทึกลง Google Sheets และส่งแจ้งเตือนส่วนตัวหาแอดมิน
-    save_to_google_sheets(date_str, user_name, category, location, detail, image_url)
+    try:
+        save_to_google_sheets(date_str, user_name, category, location, detail, image_url)
+    except Exception as e:
+        print(f"Failed to save and notify: {e}")
+        return
     
-    # ถ้าเป็นการส่งรูปในแชทส่วนตัว (1-1) ให้บอตตอบกลับยืนยันในแชทส่วนตัวด้วย เพื่อให้รู้ว่าทำงานเสร็จ
     if event.source.type == "user":
         line_bot_api.reply_message(
             event.reply_token,
