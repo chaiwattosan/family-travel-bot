@@ -110,7 +110,7 @@ def ask_gemini_agent(user_message, sheet_data):
    - หากผู้ใช้ถาม "มื้อเย็น" หรือ "อาหารเย็น": ให้หาภาพที่โพสต์ในช่วงเวลา 15:00 น. เป็นต้นไป
 3. หากพบรูปที่ตรงกัน ให้ดึง image_url ออกมา และในการเขียน text_reply ต้องระบุเวลาที่โพสต์รูปนั้นกำกับด้วยเสมอ
 4. หากในตาราง "ไม่มี" รูปที่สอดคล้อง ให้กำหนด "image_url": null และตอบใน text_reply เช่น "ยังไม่พบรูปภาพหรือข้อมูลเกี่ยวกับช่วงเวลานี้ในระบบครับ"
-5. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม (ที่ไม่ได้เจาะจงค้นหาข้อมูลหรือสั่งสรุป) ให้เลือก action: "SAVE" ทันที
+5. หากเป็นการพูดคุยทั่วไปของคนในกลุ่ม ให้เลือก action: "SAVE" ทันที
 
 ตอบกลับเป็น JSON Object เท่านั้น:
 {{
@@ -135,10 +135,22 @@ def ask_gemini_agent(user_message, sheet_data):
 def save_text_to_google_sheets(date_str, user_name, text_content):
     try:
         sheet = get_sheet()
-        # บันทึกข้อความตัวหนังสือลงชีท (คอลัมน์รูปภาพและพรีวิวจะเว้นว่างไว้)
         row = [date_str, user_name, "ข้อความ / บันทึกทั่วไป", "-", text_content, "", "", ""]
         sheet.append_row(row, value_input_option='USER_ENTERED')
         print("Successfully saved text message to Google Sheets!")
+
+        # 🔔 แจ้งเตือนข้อความเข้าในช่วง Training Phase
+        if ADMIN_USER_ID:
+            notification_text = (
+                f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
+                f"👤 ผู้ส่ง: {user_name}\n"
+                f"💬 ข้อความ: {text_content}\n"
+                f"⏰ เวลา: {date_str}"
+            )
+            line_bot_api.push_message(
+                ADMIN_USER_ID,
+                TextSendMessage(text=notification_text)
+            )
     except Exception as e:
         print(f"Error saving text to Google Sheets: {e}")
 
@@ -194,8 +206,6 @@ def handle_text_message(event):
     except Exception:
         user_name = "สมาชิกในครอบครัว"
 
-    # 1. บันทึกข้อความทุกข้อความที่พิมพ์เข้ามาลง Google Sheets ก่อนเสมอ (Background Logging)
-    # ยกเว้นกรณีที่เป็นการเรียกคำสั่ง @Bot เพื่อไม่ให้บอตบันทึกคำสั่งเรียกตัวเองซ้ำซ้อน
     if not user_message.startswith("@Bot"):
         save_text_to_google_sheets(date_str, user_name, user_message)
 
@@ -203,7 +213,6 @@ def handle_text_message(event):
     if is_mentioned:
         user_message = user_message.replace("@Bot", "").strip()
 
-    # ถ้านี่คือ "แชทกลุ่ม" และ "ไม่มีการ @Bot เรียก" บอตจะเงียบสนิท (Silent Mode) แค่เก็บ log อย่างเดียว
     if chat_type != "user" and not is_mentioned:
         return
 
