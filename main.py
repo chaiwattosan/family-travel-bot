@@ -1,21 +1,23 @@
 import os
 import json
-from datetime import datetime, timedelta
+import time
+from datetime import datetime
 import pytz
-import gspread
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
 from flask import Flask, request, abort
+
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-import threading
-import time
+
+import gspread
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+
 import google.generativeai as genai
 
 app = Flask(__name__)
 
-# ดึงค่า Environment Variables
+# ตั้งค่า Environment Variables
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
@@ -28,7 +30,8 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    gemini_client = genai.GenerativeModel('gemini-3.8-flash')
+    # ใช้รุ่นตามมาตรฐานปัจจุบันที่เสถียร
+    gemini_client = genai.GenerativeModel('gemini-1.5-flash')
 else:
     gemini_client = None
 
@@ -37,71 +40,57 @@ SCOPES = [
     'https://www.googleapis.com/auth/calendar'
 ]
 
-def get_google_credentials():
+def get_google_creds():
     creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
     if creds_json:
         creds_dict = json.loads(creds_json)
         return Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    return Credentials.from_service_account_file('credentials.json', scopes=SCOPES)
+    return None
 
 def get_sheet():
-    creds = get_google_credentials()
+    creds = get_google_creds()
     client = gspread.authorize(creds)
     sheet_id = os.environ.get('GOOGLE_SHEET_ID')
-    return client.open_by_key(sheet_id).worksheet('log')
+    return client.open_by_key(sheet_id).worksheet("log")
 
 def get_calendar_service():
-    creds = get_google_credentials()
+    creds = get_google_creds()
     return build('calendar', 'v3', credentials=creds)
 
-def get_thai_time(timestamp_ms=None):
+def get_thai_time(timestamp_ms):
     tz = pytz.timezone('Asia/Bangkok')
-    if timestamp_ms:
-        dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz)
-    else:
-        dt = datetime.now(tz)
+    dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz)
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 def get_user_display_name(user_id):
-    # เพิ่มระบบลองดึงชื่อซ้ำ (Retry) ป้องกันจังหวะเซิร์ฟเวอร์ตื่นจากหลับ
     for attempt in range(3):
         try:
             profile = line_bot_api.get_profile(user_id)
-            if profile and profile.display_name:
-                return profile.display_name
+            return profile.display_name
         except Exception as e:
-            print(f"Attempt {attempt+1} - Could not get profile name for {user_id}: {e}")
+            print(f"Attempt {attempt+1} - Error fetching profile: {e}")
             time.sleep(1)
-    return "สมาชิกในครอบครัว"
+    return "Unknown User"
 
 def analyze_text_with_gemini(text):
     if not gemini_client:
         return "บันทึกทั่วไป", text
     prompt = f"""
-วิเคราะห์ข้อความต่อไปนี้สำหรับระบบจัดการครอบครัว:
-"{text}"
-
-โปรดจัดหมวดหมู่ข้อความนี้ให้อยู่ในประเภทใดประเภทหนึ่งดังต่อไปนี้เท่านั้น:
-- อาหารการกิน
-- สุขภาพ
-- การเงิน
-- การนัดหมาย/แจ้งเตือน
+วิเคราะห์ข้อความนี้: "{text}"
+จัดหมวดหมู่ให้อยู่ในประเภทใดประเภทหนึ่งต่อไปนี้เท่านั้น:
+- อาหาร/เครื่องดื่ม
+- ซื้อของ/ใช้จ่าย
+- การเดินทาง
 - บันทึกทั่วไป
 
-และสรุปข้อความให้กระชับเข้าใจง่าย
-ตอบกลับในรูปแบบ JSON ดังนี้:
-{{
-  "category": "หมวดหมู่ที่เลือก",
-  "summary": "ข้อความสรุป"
-}}
+ตอบกลับในรูปแบบ: [หมวดหมู่] | [ข้อความสรุปสั้นๆ]
 """
     try:
         response = gemini_client.generate_content(prompt)
-        text_resp = response.text.strip()
-        if text_resp.startswith("```json"):
-            text_resp = text_resp[7:-3].strip()
-        data = json.loads(text_resp)
-        return data.get("category", "บันทึกทั่วไป"), data.get("summary", text)
+        parts = response.text.split("|")
+        if len(parts) == 2:
+            return parts[0].strip(), parts[1].strip()
+        return "บันทึกทั่วไป", text
     except Exception as e:
         print(f"Gemini analysis error: {e}")
         return "บันทึกทั่วไป", text
@@ -135,13 +124,12 @@ def parse_calendar_intent(text):
         print(f"Calendar intent parse error: {e}")
         return None
 
-def add_to_calendar(summary, start_time_str, reminder_mins=10):
+def add_to_calendar(summary, start_time_str, reminder_minutes=10):
     try:
         service = get_calendar_service()
         tz = pytz.timezone('Asia/Bangkok')
-        start_dt = datetime.fromisoformat(start_time_str)
-        if start_dt.tzinfo is None:
-            start_dt = tz.localize(start_dt)
+        start_dt = tz.localize(datetime.strptime(start_time_str, '%Y-%m-%dT%H:%M:%S'))
+        from datetime import timedelta
         end_dt = start_dt + timedelta(hours=1)
 
         event = {
@@ -150,37 +138,24 @@ def add_to_calendar(summary, start_time_str, reminder_mins=10):
             'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Bangkok'},
             'reminders': {
                 'useDefault': False,
-                'overrides': [{'method': 'popup', 'minutes': reminder_mins}]
-            }
+                'overrides': [{'method': 'popup', 'minutes': reminder_minutes}],
+            },
         }
-        
-        cal_id = os.environ.get('FAMILY_CALENDAR_ID', 'primary')
-        event_result = service.events().insert(calendarId=cal_id, body=event).execute()
-        return event_result
+        event_result = service.events().insert(calendarId=FAMILY_CALENDAR_ID, body=event).execute()
+        return event_result.get('htmlLink')
     except Exception as e:
         print(f"Error adding to calendar: {e}")
         return None
 
-def get_family_calendar_events():
+@app.route("/callback", methods=['POST'])
+def callback():
+    signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
     try:
-        service = get_calendar_service()
-        now = datetime.now(pytz.timezone('Asia/Bangkok')).isoformat()
-        cal_id = os.environ.get('FAMILY_CALENDAR_ID', 'primary')
-        
-        events_result = service.events().list(
-            calendarId=cal_id,
-            timeMin=now,
-            maxResults=20,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute()
-        return events_result.get('items', [])
-    except Exception as e:
-        print(f"Error getting calendar events: {e}")
-        return []
-
-import threading
-import time
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    return 'OK'
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
@@ -191,7 +166,7 @@ def handle_text_message(event):
         timestamp = event.timestamp
         thai_time = get_thai_time(timestamp)
 
-        # ตรวจสอบนัดหมายเฉพาะเมื่อเข้าเงื่อนไขชัดเจน
+        # 1. ตรวจสอบนัดหมายปฏิทิน
         cal_intent = parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
             summary = cal_intent.get("summary", "นัดหมายครอบครัว")
@@ -210,12 +185,10 @@ def handle_text_message(event):
                 else:
                     reply_text = "❌ เกิดข้อผิดพลาดในการบันทึกปฏิทิน"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-                return  # ถ้าเป็นการนัดหมาย ให้จบการทำงานตรงนี้เลย ไม่ต้องบันทึกลงชีตต่อ
+                return  # จบการทำงานเมื่อสร้างนัดหมายสำเร็จ
 
-        # ส่วนบันทึกข้อความทั่วไปลง Google Sheets
+        # 2. บันทึกข้อความทั่วไปลง Google Sheets พร้อมระบบ Retry ป้องกัน Cold Start
         category, summary_text = analyze_text_with_gemini(msg_text)
-        
-        # ระบบ Retry สำหรับบันทึกลง Google Sheets ป้องกันจังหวะ Cold Start
         for attempt in range(3):
             try:
                 sheet = get_sheet()
@@ -228,64 +201,6 @@ def handle_text_message(event):
     except Exception as e:
         print(f"Error handling message: {e}")
 
-def background_calendar_reminder_worker():
-    notified_events = set()
-    while True:
-        try:
-            time.sleep(60)
-            events = get_family_calendar_events()
-            now = datetime.now(pytz.timezone('Asia/Bangkok'))
-            
-            for event in events:
-                start_str = event.get('start', {}).get('dateTime')
-                if not start_str:
-                    continue
-                
-                event_id = event.get('id')
-                event_start = datetime.fromisoformat(start_str)
-                
-                reminders_setting = event.get('reminders', {}).get('overrides', [{'minutes': 30}])
-                reminder_mins = reminders_setting[0].get('minutes', 30) if reminders_setting else 30
-                
-                trigger_time = event_start - timedelta(minutes=reminder_mins)
-                time_diff = (now - trigger_time).total_seconds()
-                
-                if 0 <= time_diff < 900 and event_id not in notified_events:
-                    summary = event.get('summary', 'ไม่มีชื่อนัดหมาย')
-                    start_time_formatted = event_start.strftime('%H:%M น.')
-                    
-                    alert_msg = (
-                        f"🚨 **แจ้งเตือนนัดหมายครอบครัว!**\n\n"
-                        f"📌 เรื่อง: {summary}\n"
-                        f"⏰ เวลาเริ่ม: {start_time_formatted}\n"
-                        f"🔔 (แจ้งเตือนล่วงหน้า {reminder_mins} นาที)"
-                    )
-                    
-                    if FAMILY_GROUP_ID and FAMILY_GROUP_ID.startswith("C"):
-                        line_bot_api.push_message(FAMILY_GROUP_ID, TextSendMessage(text=alert_msg))
-                    elif ADMIN_USER_ID:
-                        line_bot_api.push_message(ADMIN_USER_ID, TextSendMessage(text=alert_msg))
-                    
-                    notified_events.add(event_id)
-        except Exception as e:
-            print(f"Error in background reminder worker: {e}")
-
-worker_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
-worker_thread.start()
-
-@app.route("/")
-def index():
-    return "Family Travel & Kitchen Bot is running!"
-
-@app.route("/callback", methods=['POST'])
-def callback():
-    signature = request.headers['X-Line-Signature']
-    body = request.get_data(as_text=True)
-    try:
-        handler.handle(body, signature)
-    except InvalidSignatureError:
-        abort(400)
-    return 'OK'
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
