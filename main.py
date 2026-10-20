@@ -78,6 +78,7 @@ def get_user_display_name(user_id):
             return profile.display_name
     except Exception as e:
         print(f"Could not get profile name for {user_id}: {e}")
+    # ถ้าดึงชื่อจาก LINE ไม่ได้ในจังหวะนี้ ให้ใช้ชื่อกลางหรือระบุตาม User ID แทน เพื่อให้บันทึกลงชีทได้เสมอไม่หลุดหาย
     return "สมาชิกในครอบครัว"
 
 def analyze_image_with_gemini(image_path):
