@@ -1,8 +1,9 @@
 import os
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
+import threading
 from flask import Flask, request, abort
 
 from linebot import LineBotApi, WebhookHandler
@@ -30,7 +31,6 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    # ใช้รุ่นตามมาตรฐานปัจจุบันที่เสถียร
     gemini_client = genai.GenerativeModel('gemini-1.5-flash')
 else:
     gemini_client = None
@@ -124,12 +124,11 @@ def parse_calendar_intent(text):
         print(f"Calendar intent parse error: {e}")
         return None
 
-def add_to_calendar(summary, start_time_str, reminder_minutes=10):
+def add_to_calendar(summary, start_time_str, reminder_minutes=30):
     try:
         service = get_calendar_service()
         tz = pytz.timezone('Asia/Bangkok')
         start_dt = tz.localize(datetime.strptime(start_time_str, '%Y-%m-%dT%H:%M:%S'))
-        from datetime import timedelta
         end_dt = start_dt + timedelta(hours=1)
 
         event = {
@@ -146,6 +145,57 @@ def add_to_calendar(summary, start_time_str, reminder_minutes=10):
     except Exception as e:
         print(f"Error adding to calendar: {e}")
         return None
+
+# ระบบดึงอีเวนต์และแจ้งเตือนล่วงหน้า
+def background_calendar_reminder_worker():
+    notified_events = set()
+    while True:
+        try:
+            time.sleep(60) # ตรวจสอบทุกๆ 1 นาที
+            service = get_calendar_service()
+            tz = pytz.timezone('Asia/Bangkok')
+            now = datetime.now(tz)
+            later = now + timedelta(minutes=35) # เช็กล่วงหน้า 35 นาที
+
+            events_result = service.events().list(
+                calendarId=FAMILY_CALENDAR_ID,
+                timeMin=now.isoformat(),
+                timeMax=later.isoformat(),
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+            events = events_result.get('items', [])
+
+            for event in events:
+                event_id = event['id']
+                if event_id in notified_events:
+                    continue
+                
+                start_str = event['start'].get('dateTime') or event['start'].get('date')
+                if 'T' not in start_str:
+                    continue # ข้ามอีเวนต์ที่เป็น All-day
+                
+                start_dt = datetime.fromisoformat(start_str).astimezone(tz)
+                diff_minutes = (start_dt - now).total_seconds() / 60
+
+                # ถ้าใกล้ถึงเวลาตามกำหนด (เช่น เหลือเวลาประมาณ 25-30 นาที) ให้ส่งแจ้งเตือนเข้ากลุ่ม
+                if 0 <= diff_minutes <= 30:
+                    summary = event.get('summary', 'ไม่มีหัวข้อ')
+                    time_formatted = start_dt.strftime('%H:%M น.')
+                    
+                    alert_text = (
+                        f"⏰ **แจ้งเตือนกำหนดการใกล้ถึงเวลา!**\n"
+                        f"📌 เรื่อง: {summary}\n"
+                        f"🕒 เวลา: {time_formatted}"
+                    )
+                    
+                    target_id = FAMILY_GROUP_ID if FAMILY_GROUP_ID else ADMIN_USER_ID
+                    if target_id:
+                        line_bot_api.push_message(target_id, TextSendMessage(text=alert_text))
+                    
+                    notified_events.add(event_id)
+        except Exception as e:
+            print(f"Reminder worker error: {e}")
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -171,7 +221,7 @@ def handle_text_message(event):
         if cal_intent and cal_intent.get("is_calendar"):
             summary = cal_intent.get("summary", "นัดหมายครอบครัว")
             start_time = cal_intent.get("start_time")
-            reminder_mins = cal_intent.get("reminder_minutes", 10)
+            reminder_mins = cal_intent.get("reminder_minutes", 30)
             
             if start_time:
                 res = add_to_calendar(summary, start_time, reminder_mins)
@@ -187,7 +237,7 @@ def handle_text_message(event):
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 return  # จบการทำงานเมื่อสร้างนัดหมายสำเร็จ
 
-        # 2. บันทึกข้อความทั่วไปลง Google Sheets พร้อมระบบ Retry ป้องกัน Cold Start
+        # 2. บันทึกข้อความทั่วไปลง Google Sheets พร้อมระบบ Retry
         category, summary_text = analyze_text_with_gemini(msg_text)
         for attempt in range(3):
             try:
@@ -198,9 +248,27 @@ def handle_text_message(event):
                 print(f"Attempt {attempt+1} - Error saving to Google Sheets: {e}")
                 time.sleep(1)
 
+        # 3. ส่ง Log รายงานส่วนตัวหา Admin ทุกครั้งที่มีการบันทึกข้อความ (ตามแบบเดิมที่คุณ Chaiwat ต้องการ)
+        if ADMIN_USER_ID:
+            admin_msg = (
+                f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
+                f"👤 ผู้ส่ง: {sender_name}\n"
+                f"📁 หมวดหมู่: {category}\n"
+                f"💬 ข้อความ: {summary_text}\n"
+                f"⏰ เวลา: {thai_time}"
+            )
+            try:
+                line_bot_api.push_message(ADMIN_USER_ID, TextSendMessage(text=admin_msg))
+            except Exception as e:
+                print(f"Error sending admin log: {e}")
+
     except Exception as e:
         print(f"Error handling message: {e}")
 
+# เริ่มต้นเปิด Worker คอยเช็กเวลานัดหมายเบื้องหลัง
 if __name__ == "__main__":
+    reminder_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
+    reminder_thread.start()
+    
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
