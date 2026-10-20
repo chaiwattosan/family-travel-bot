@@ -21,9 +21,11 @@ app = Flask(__name__)
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-ADMIN_USER_ID = os.environ.get('ADMIN_USER_ID')
 FAMILY_GROUP_ID = os.environ.get('FAMILY_GROUP_ID')
 FAMILY_CALENDAR_ID = os.environ.get('FAMILY_CALENDAR_ID', 'primary')
+
+# กำหนด User ID ส่วนตัวของคุณ Chaiwat สำหรับส่งรายงานแจ้งเตือนแอดมินโดยตรง
+ADMIN_USER_ID = "U4408dd0ab71b56db6074273eb28651b0"
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -73,8 +75,6 @@ def get_user_display_name(user_id):
 def analyze_text_with_gemini(text):
     if not gemini_client:
         return "บันทึกทั่วไป", text
-    
-    # เพิ่มระบบพยายามเรียกใช้งานซ้ำ (Retry) ป้องกันกรณีเซิร์ฟเวอร์ AI แน่นชั่วคราว (Error 503)
     for attempt in range(3):
         try:
             response = gemini_client.models.generate_content(
@@ -95,10 +95,8 @@ def analyze_text_with_gemini(text):
                 return parts[0].strip(), parts[1].strip()
             return "บันทึกทั่วไป", text
         except Exception as e:
-            print(f"Gemini attempt {attempt+1} error (503/High Demand): {e}")
-            time.sleep(2) # รอ 2 วินาทีก่อนลองใหม่
-            
-    # ถ้าลองครบ 3 รอบแล้วยังล่ม ให้เซฟสำรองเป็นบันทึกทั่วไปทันทีโดยไม่พัง
+            print(f"Gemini attempt {attempt+1} error: {e}")
+            time.sleep(2)
     return "บันทึกทั่วไป", text
 
 def parse_calendar_intent(text):
@@ -224,6 +222,7 @@ def handle_text_message(event):
         timestamp = event.timestamp
         thai_time = get_thai_time(timestamp)
 
+        # 1. ตรวจสอบนัดหมายปฏิทิน
         cal_intent = parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
             summary = cal_intent.get("summary", "นัดหมายครอบครัว")
@@ -244,6 +243,7 @@ def handle_text_message(event):
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 return
 
+        # 2. บันทึกข้อความทั่วไปลง Google Sheets
         category, summary_text = analyze_text_with_gemini(msg_text)
         for attempt in range(3):
             try:
@@ -254,6 +254,7 @@ def handle_text_message(event):
                 print(f"Attempt {attempt+1} - Error saving to Google Sheets: {e}")
                 time.sleep(1)
 
+        # 3. ส่ง Log รายงานส่วนตัวไปหาแอดมินโดยตรง
         if ADMIN_USER_ID:
             admin_msg = (
                 f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
