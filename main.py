@@ -18,7 +18,6 @@ from google import genai
 
 app = Flask(__name__)
 
-# ตั้งค่า Environment Variables
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
@@ -74,7 +73,13 @@ def get_user_display_name(user_id):
 def analyze_text_with_gemini(text):
     if not gemini_client:
         return "บันทึกทั่วไป", text
-    prompt = f"""
+    
+    # เพิ่มระบบพยายามเรียกใช้งานซ้ำ (Retry) ป้องกันกรณีเซิร์ฟเวอร์ AI แน่นชั่วคราว (Error 503)
+    for attempt in range(3):
+        try:
+            response = gemini_client.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=f"""
 วิเคราะห์ข้อความนี้: "{text}"
 จัดหมวดหมู่ให้อยู่ในประเภทใดประเภทหนึ่งต่อไปนี้เท่านั้น:
 - อาหาร/เครื่องดื่ม
@@ -83,31 +88,33 @@ def analyze_text_with_gemini(text):
 - บันทึกทั่วไป
 
 ตอบกลับในรูปแบบ: [หมวดหมู่] | [ข้อความสรุปสั้นๆ]
-"""
-    try:
-        # ใช้รุ่น gemini-3.8-flash ที่ถูกต้องและรองรับในปัจจุบัน
-        response = gemini_client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=prompt,
-        )
-        parts = response.text.split("|")
-        if len(parts) == 2:
-            return parts[0].strip(), parts[1].strip()
-        return "บันทึกทั่วไป", text
-    except Exception as e:
-        print(f"Gemini analysis error: {e}")
-        return "บันทึกทั่วไป", text
+""",
+            )
+            parts = response.text.split("|")
+            if len(parts) == 2:
+                return parts[0].strip(), parts[1].strip()
+            return "บันทึกทั่วไป", text
+        except Exception as e:
+            print(f"Gemini attempt {attempt+1} error (503/High Demand): {e}")
+            time.sleep(2) # รอ 2 วินาทีก่อนลองใหม่
+            
+    # ถ้าลองครบ 3 รอบแล้วยังล่ม ให้เซฟสำรองเป็นบันทึกทั่วไปทันทีโดยไม่พัง
+    return "บันทึกทั่วไป", text
 
 def parse_calendar_intent(text):
     if not gemini_client:
         return None
-    prompt = f"""
+    for attempt in range(3):
+        try:
+            response = gemini_client.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=f"""
 วิเคราะห์ข้อความนี้อย่างละเอียดว่าเป็น "คำสั่งหรือความต้องการให้นัดหมาย/บันทึกปฏิทินอย่างแท้จริง" หรือไม่: "{text}"
 
 กฎเหล็กขั้นเด็ดขาดในการตัดสินใจ (is_calendar ต้องเป็น true ก็ต่อเมื่อผ่านทุกข้อ):
-1. ข้อความต้องระบุทั้ง "วัน" (เช่น วันนี้, พรุ่งนี้, วันพุธ) และ "เวลาที่เจาะจง" (เช่น 06:45, 18:00 น.) อย่างชัดเจน
-2. ข้อความนั้นต้องมีบริบทเชิง "การนัดหมาย, กำหนดการทางการ, หรือคำสั่งให้เตือน" (เช่น มีคำว่า นัด, เตือน, ไปพบ, ประชุม, หรือกำหนดเวลาทำธุระ) 
-3. หากเป็นการพิมพ์พูดคุยสนทนาทั่วไป เล่าเรื่อง แชทตอบโต้กันในกลุ่ม หรือบอกเล่าแผนชีวิตประจำวันทั่วๆไป โดยไม่มีเจตนาสั่งให้บันทึกนัดหมาย ให้ถือว่าไม่ใช่ (is_calendar: false ทันที)
+1. ข้อความต้องระบุทั้ง "วัน" และ "เวลาที่เจาะจง" อย่างชัดเจน
+2. ข้อความนั้นต้องมีบริบทเชิง "การนัดหมาย, กำหนดการทางการ, หรือคำสั่งให้เตือน"
+3. หากเป็นการพิมพ์พูดคุยสนทนาทั่วไป ให้ถือว่าไม่ใช่ (is_calendar: false ทันที)
 
 ตอบกลับในรูปแบบ JSON เท่านั้น:
 {{
@@ -116,20 +123,16 @@ def parse_calendar_intent(text):
   "start_time": "YYYY-MM-DDTHH:MM:SS",
   "reminder_minutes": 30
 }}
-"""
-    try:
-        # ใช้รุ่น gemini-3.8-flash ที่ถูกต้องและรองรับในปัจจุบัน
-        response = gemini_client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=prompt,
-        )
-        text_resp = response.text.strip()
-        if text_resp.startswith("```json"):
-            text_resp = text_resp[7:-3].strip()
-        return json.loads(text_resp)
-    except Exception as e:
-        print(f"Calendar intent parse error: {e}")
-        return None
+""",
+            )
+            text_resp = response.text.strip()
+            if text_resp.startswith("```json"):
+                text_resp = text_resp[7:-3].strip()
+            return json.loads(text_resp)
+        except Exception as e:
+            print(f"Calendar intent parse attempt {attempt+1} error: {e}")
+            time.sleep(2)
+    return None
 
 def add_to_calendar(summary, start_time_str, reminder_minutes=30):
     try:
@@ -221,7 +224,6 @@ def handle_text_message(event):
         timestamp = event.timestamp
         thai_time = get_thai_time(timestamp)
 
-        # 1. ตรวจสอบนัดหมายปฏิทิน
         cal_intent = parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
             summary = cal_intent.get("summary", "นัดหมายครอบครัว")
@@ -242,7 +244,6 @@ def handle_text_message(event):
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 return
 
-        # 2. บันทึกข้อความทั่วไปลง Google Sheets
         category, summary_text = analyze_text_with_gemini(msg_text)
         for attempt in range(3):
             try:
@@ -253,7 +254,6 @@ def handle_text_message(event):
                 print(f"Attempt {attempt+1} - Error saving to Google Sheets: {e}")
                 time.sleep(1)
 
-        # 3. ส่ง Log รายงานส่วนตัวหา Admin
         if ADMIN_USER_ID:
             admin_msg = (
                 f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
