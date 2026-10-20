@@ -179,45 +179,60 @@ def get_family_calendar_events():
         print(f"Error getting calendar events: {e}")
         return []
 
+import threading
+import time
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
-    user_id = event.source.user_id
-    sender_name = get_user_display_name(user_id)
-    msg_text = event.message.text
-    timestamp = event.timestamp
-    thai_time = get_thai_time(timestamp)
+    # ทันทีที่รับข้อความ ให้แยก Thread ออกไปประมวลผลเบื้องหลัง
+    # เพื่อให้เซิร์ฟเวอร์ตอบกลับ LINE ทันที ป้องกัน Timeout
+    thread = threading.Thread(target=process_heavy_task, args=(event,))
+    thread.start()
 
-    # ตรวจสอบนัดหมายเฉพาะเมื่อเข้าเงื่อนไขชัดเจน
-    cal_intent = parse_calendar_intent(msg_text)
-    if cal_intent and cal_intent.get("is_calendar"):
-        summary = cal_intent.get("summary", "นัดหมายครอบครัว")
-        start_time = cal_intent.get("start_time")
-        reminder_mins = cal_intent.get("reminder_minutes", 10)
+def process_heavy_task(event):
+    try:
+        user_id = event.source.user_id
+        sender_name = get_user_display_name(user_id)
+        msg_text = event.message.text
+        timestamp = event.timestamp
+        thai_time = get_thai_time(timestamp)
+
+        # ตรวจสอบนัดหมายเฉพาะเมื่อเข้าเงื่อนไขชัดเจน
+        cal_intent = parse_calendar_intent(msg_text)
+        if cal_intent and cal_intent.get("is_calendar"):
+            summary = cal_intent.get("summary", "นัดหมายครอบครัว")
+            start_time = cal_intent.get("start_time")
+            reminder_mins = cal_intent.get("reminder_minutes", 10)
+            
+            if start_time:
+                res = add_to_calendar(summary, start_time, reminder_mins)
+                if res:
+                    reply_text = (
+                        f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n"
+                        f"📌 หัวข้อ: {summary}\n"
+                        f"⏰ เริ่ม: {start_time}\n"
+                        f"🔔 แจ้งเตือนล่วงหน้า: {reminder_mins} นาที"
+                    )
+                else:
+                    reply_text = "❌ เกิดข้อผิดพลาดในการบันทึกปฏิทิน"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+                return  # ถ้าเป็นการนัดหมาย ให้จบการทำงานตรงนี้เลย ไม่ต้องบันทึกลงชีตต่อ
+
+        # ส่วนบันทึกข้อความทั่วไปลง Google Sheets
+        category, summary_text = analyze_text_with_gemini(msg_text)
         
-        if start_time:
-            res = add_to_calendar(summary, start_time, reminder_mins)
-            if res:
-                reply_text = (
-                    f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n"
-                    f"📌 หัวข้อ: {summary}\n"
-                    f"⏰ เริ่ม: {start_time}\n"
-                    f"🔔 แจ้งเตือนล่วงหน้า: {reminder_mins} นาที"
-                )
-            else:
-                reply_text = "❌ เกิดข้อผิดพลาดในการบันทึกปฏิทิน"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        # ระบบ Retry สำหรับบันทึกลง Google Sheets ป้องกันจังหวะ Cold Start
+        for attempt in range(3):
+            try:
+                sheet = get_sheet()
+                sheet.append_row([thai_time, sender_name, category, "-", summary_text])
+                break
+            except Exception as e:
+                print(f"Attempt {attempt+1} - Error saving to Google Sheets: {e}")
+                time.sleep(1)
 
-    category, summary = analyze_text_with_gemini(msg_text)
-    
-    # เพิ่มระบบ Retry สำหรับบันทึกลง Google Sheets ป้องกันจังหวะ Cold Start
-    for attempt in range(3):
-        try:
-            sheet = get_sheet()
-            sheet.append_row([thai_time, sender_name, category, "-", summary])
-            break
-        except Exception as e:
-            print(f"Attempt {attempt+1} - Error saving to Google Sheets: {e}")
-            time.sleep(1)
+    except Exception as e:
+        print(f"Error in background task: {e}")
 
 def background_calendar_reminder_worker():
     notified_events = set()
