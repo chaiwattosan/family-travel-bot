@@ -57,7 +57,8 @@ def get_sheet():
     creds = get_google_credentials()
     client = gspread.authorize(creds)
     sheet_id = os.environ.get('GOOGLE_SHEET_ID')
-    return client.open_by_key(sheet_id).sheet1
+    # เปลี่ยนมาเจาะจงเรียกใช้แท็บชื่อ 'log' โดยตรง
+    return client.open_by_key(sheet_id).worksheet('log')
 
 def get_calendar_service():
     creds = get_google_credentials()
