@@ -85,8 +85,9 @@ def analyze_text_with_gemini(text):
 ตอบกลับในรูปแบบ: [หมวดหมู่] | [ข้อความสรุปสั้นๆ]
 """
     try:
+        # อัปเดตใช้โมเดลล่าสุดตามคำแนะนำของ Google API
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.8-flash',
             contents=prompt,
         )
         parts = response.text.split("|")
@@ -118,7 +119,7 @@ def parse_calendar_intent(text):
 """
     try:
         response = gemini_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.8-flash',
             contents=prompt,
         )
         text_resp = response.text.strip()
@@ -219,6 +220,7 @@ def handle_text_message(event):
         timestamp = event.timestamp
         thai_time = get_thai_time(timestamp)
 
+        # 1. ตรวจสอบนัดหมายปฏิทิน
         cal_intent = parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
             summary = cal_intent.get("summary", "นัดหมายครอบครัว")
@@ -239,6 +241,7 @@ def handle_text_message(event):
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 return
 
+        # 2. บันทึกข้อความทั่วไปลง Google Sheets
         category, summary_text = analyze_text_with_gemini(msg_text)
         for attempt in range(3):
             try:
@@ -249,6 +252,7 @@ def handle_text_message(event):
                 print(f"Attempt {attempt+1} - Error saving to Google Sheets: {e}")
                 time.sleep(1)
 
+        # 3. ส่ง Log รายงานส่วนตัวหา Admin
         if ADMIN_USER_ID:
             admin_msg = (
                 f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
