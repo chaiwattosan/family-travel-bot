@@ -85,7 +85,7 @@ def analyze_text_with_gemini(text):
 ตอบกลับในรูปแบบ: [หมวดหมู่] | [ข้อความสรุปสั้นๆ]
 """
     try:
-        # อัปเดตใช้โมเดลล่าสุดตามคำแนะนำของ Google API
+        # ใช้รุ่น gemini-3.8-flash ที่ถูกต้องและรองรับในปัจจุบัน
         response = gemini_client.models.generate_content(
             model='gemini-3.8-flash',
             contents=prompt,
@@ -118,6 +118,7 @@ def parse_calendar_intent(text):
 }}
 """
     try:
+        # ใช้รุ่น gemini-3.8-flash ที่ถูกต้องและรองรับในปัจจุบัน
         response = gemini_client.models.generate_content(
             model='gemini-3.8-flash',
             contents=prompt,
