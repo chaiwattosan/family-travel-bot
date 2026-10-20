@@ -184,12 +184,6 @@ import time
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
-    # ทันทีที่รับข้อความ ให้แยก Thread ออกไปประมวลผลเบื้องหลัง
-    # เพื่อให้เซิร์ฟเวอร์ตอบกลับ LINE ทันที ป้องกัน Timeout
-    thread = threading.Thread(target=process_heavy_task, args=(event,))
-    thread.start()
-
-def process_heavy_task(event):
     try:
         user_id = event.source.user_id
         sender_name = get_user_display_name(user_id)
@@ -232,7 +226,7 @@ def process_heavy_task(event):
                 time.sleep(1)
 
     except Exception as e:
-        print(f"Error in background task: {e}")
+        print(f"Error handling message: {e}")
 
 def background_calendar_reminder_worker():
     notified_events = set()
