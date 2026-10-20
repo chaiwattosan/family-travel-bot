@@ -14,7 +14,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-import google.generativeai as genai
+# ใช้ SDK ตัวใหม่ล่าสุดตามคำแนะนำของ Google
+from google import genai
 
 app = Flask(__name__)
 
@@ -29,9 +30,9 @@ FAMILY_CALENDAR_ID = os.environ.get('FAMILY_CALENDAR_ID', 'primary')
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
+# ตั้งค่า Client ของ Google GenAI ตัวใหม่
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_client = genai.GenerativeModel('gemini-3.8-flash')
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 else:
     gemini_client = None
 
@@ -86,7 +87,10 @@ def analyze_text_with_gemini(text):
 ตอบกลับในรูปแบบ: [หมวดหมู่] | [ข้อความสรุปสั้นๆ]
 """
     try:
-        response = gemini_client.generate_content(prompt)
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
         parts = response.text.split("|")
         if len(parts) == 2:
             return parts[0].strip(), parts[1].strip()
@@ -104,7 +108,7 @@ def parse_calendar_intent(text):
 กฎเหล็กขั้นเด็ดขาดในการตัดสินใจ (is_calendar ต้องเป็น true ก็ต่อเมื่อผ่านทุกข้อ):
 1. ข้อความต้องระบุทั้ง "วัน" (เช่น วันนี้, พรุ่งนี้, วันพุธ) และ "เวลาที่เจาะจง" (เช่น 06:45, 18:00 น.) อย่างชัดเจน
 2. ข้อความนั้นต้องมีบริบทเชิง "การนัดหมาย, กำหนดการทางการ, หรือคำสั่งให้เตือน" (เช่น มีคำว่า นัด, เตือน, ไปพบ, ประชุม, หรือกำหนดเวลาทำธุระ) 
-3. หากเป็นการพิมพ์พูดคุยสนทนาทั่วไป เล่าเรื่อง แชทตอบโต้กันในกลุ่ม หรือบอกเล่าแผนชีวิตประจำวันทั่วๆไป (เช่น "พรุ่งนี้กินข้าว 6.45", "รอดมาทำงาน", "พรุ่งนี้ออกบ้าน 7 โมง") โดยไม่มีเจตนาสั่งให้บันทึกนัดหมาย ให้ถือว่าไม่ใช่ (is_calendar: false ทันที)
+3. หากเป็นการพิมพ์พูดคุยสนทนาทั่วไป เล่าเรื่อง แชทตอบโต้กันในกลุ่ม หรือบอกเล่าแผนชีวิตประจำวันทั่วๆไป โดยไม่มีเจตนาสั่งให้บันทึกนัดหมาย ให้ถือว่าไม่ใช่ (is_calendar: false ทันที)
 
 ตอบกลับในรูปแบบ JSON เท่านั้น:
 {{
@@ -115,7 +119,10 @@ def parse_calendar_intent(text):
 }}
 """
     try:
-        response = gemini_client.generate_content(prompt)
+        response = gemini_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
         text_resp = response.text.strip()
         if text_resp.startswith("```json"):
             text_resp = text_resp[7:-3].strip()
@@ -151,11 +158,11 @@ def background_calendar_reminder_worker():
     notified_events = set()
     while True:
         try:
-            time.sleep(60) # ตรวจสอบทุกๆ 1 นาที
+            time.sleep(60)
             service = get_calendar_service()
             tz = pytz.timezone('Asia/Bangkok')
             now = datetime.now(tz)
-            later = now + timedelta(minutes=35) # เช็กล่วงหน้า 35 นาที
+            later = now + timedelta(minutes=35)
 
             events_result = service.events().list(
                 calendarId=FAMILY_CALENDAR_ID,
@@ -173,12 +180,11 @@ def background_calendar_reminder_worker():
                 
                 start_str = event['start'].get('dateTime') or event['start'].get('date')
                 if 'T' not in start_str:
-                    continue # ข้ามอีเวนต์ที่เป็น All-day
+                    continue
                 
                 start_dt = datetime.fromisoformat(start_str).astimezone(tz)
                 diff_minutes = (start_dt - now).total_seconds() / 60
 
-                # ถ้าใกล้ถึงเวลาตามกำหนด (เช่น เหลือเวลาประมาณ 25-30 นาที) ให้ส่งแจ้งเตือนเข้ากลุ่ม
                 if 0 <= diff_minutes <= 30:
                     summary = event.get('summary', 'ไม่มีหัวข้อ')
                     time_formatted = start_dt.strftime('%H:%M น.')
@@ -235,7 +241,7 @@ def handle_text_message(event):
                 else:
                     reply_text = "❌ เกิดข้อผิดพลาดในการบันทึกปฏิทิน"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-                return  # จบการทำงานเมื่อสร้างนัดหมายสำเร็จ
+                return
 
         # 2. บันทึกข้อความทั่วไปลง Google Sheets พร้อมระบบ Retry
         category, summary_text = analyze_text_with_gemini(msg_text)
@@ -248,7 +254,7 @@ def handle_text_message(event):
                 print(f"Attempt {attempt+1} - Error saving to Google Sheets: {e}")
                 time.sleep(1)
 
-        # 3. ส่ง Log รายงานส่วนตัวหา Admin ทุกครั้งที่มีการบันทึกข้อความ (ตามแบบเดิมที่คุณ Chaiwat ต้องการ)
+        # 3. ส่ง Log รายงานส่วนตัวหา Admin
         if ADMIN_USER_ID:
             admin_msg = (
                 f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
@@ -265,7 +271,6 @@ def handle_text_message(event):
     except Exception as e:
         print(f"Error handling message: {e}")
 
-# เริ่มต้นเปิด Worker คอยเช็กเวลานัดหมายเบื้องหลัง
 if __name__ == "__main__":
     reminder_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
     reminder_thread.start()
