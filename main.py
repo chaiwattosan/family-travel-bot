@@ -48,7 +48,6 @@ def get_sheet():
     creds = get_google_credentials()
     client = gspread.authorize(creds)
     sheet_id = os.environ.get('GOOGLE_SHEET_ID')
-    # เชื่อมต่อกับแท็บชื่อ 'log' โดยตรง
     return client.open_by_key(sheet_id).worksheet('log')
 
 def get_calendar_service():
@@ -64,12 +63,15 @@ def get_thai_time(timestamp_ms=None):
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 def get_user_display_name(user_id):
-    try:
-        profile = line_bot_api.get_profile(user_id)
-        if profile and profile.display_name:
-            return profile.display_name
-    except Exception as e:
-        print(f"Could not get profile name for {user_id}: {e}")
+    # เพิ่มระบบลองดึงชื่อซ้ำ (Retry) ป้องกันจังหวะเซิร์ฟเวอร์ตื่นจากหลับ
+    for attempt in range(3):
+        try:
+            profile = line_bot_api.get_profile(user_id)
+            if profile and profile.display_name:
+                return profile.display_name
+        except Exception as e:
+            print(f"Attempt {attempt+1} - Could not get profile name for {user_id}: {e}")
+            time.sleep(1)
     return "สมาชิกในครอบครัว"
 
 def analyze_text_with_gemini(text):
@@ -107,9 +109,15 @@ def analyze_text_with_gemini(text):
 def parse_calendar_intent(text):
     if not gemini_client:
         return None
+    # เพิ่มกฎเหล็ก ป้องกันข้อความเล่าเรื่องทั่วไปกลายเป็นนัดหมาย
     prompt = f"""
-ข้อความนี้ต้องการนัดหมายหรือบันทึกปฏิทินหรือไม่: "{text}"
-หากใช่ ให้แปลงเวลาเป็นรูปแบบ ISO (เช่น 2026-10-20T14:00:00) โดยอิงเวลาปัจจุบัน พยายามหาชื่อหัวข้อและเวลาเตือนล่วงหน้า (ค่าเริ่มต้น 10 นาที)
+วิเคราะห์ข้อความนี้ว่าเป็น "การนัดหมายหรือกำหนดการที่มีเวลาชัดเจน" หรือไม่: "{text}"
+
+กฎเหล็กในการตัดสินใจ:
+1. ข้อความต้องระบุทั้ง "วัน" (เช่น วันนี้, พรุ่งนี้, วันอังคาร) และ "เวลาที่เจาะจง" (เช่น 14:00, บ่ายโมง, 18:00 น.) อย่างชัดเจน
+2. หากเป็นการเล่าเรื่อง พูดคุยทั่วไป แผนการทั่วไป หรือรายการอาหาร (เช่น "พรุ่งนี้จะทำจอผักกาด...") โดยไม่มีเวลากำหนดแน่นอน ให้ถือว่าไม่ใช่การนัดหมาย (is_calendar: false)
+3. ต้องเป็นเจตนาเพื่อเตือนความจำหรือนัดหมายทำกิจกรรมจริงๆ เท่านั้น
+
 ตอบกลับในรูปแบบ JSON เท่านั้น:
 {{
   "is_calendar": true/false,
@@ -117,7 +125,6 @@ def parse_calendar_intent(text):
   "start_time": "YYYY-MM-DDTHH:MM:SS",
   "reminder_minutes": 10
 }}
-หากไม่ใช่การนัดหมาย ให้คืนค่า is_calendar เป็น false
 """
     try:
         response = gemini_client.generate_content(prompt)
@@ -181,6 +188,7 @@ def handle_text_message(event):
     timestamp = event.timestamp
     thai_time = get_thai_time(timestamp)
 
+    # ตรวจสอบนัดหมายเฉพาะเมื่อเข้าเงื่อนไขชัดเจน
     cal_intent = parse_calendar_intent(msg_text)
     if cal_intent and cal_intent.get("is_calendar"):
         summary = cal_intent.get("summary", "นัดหมายครอบครัว")
@@ -202,11 +210,15 @@ def handle_text_message(event):
 
     category, summary = analyze_text_with_gemini(msg_text)
     
-    try:
-        sheet = get_sheet()
-        sheet.append_row([thai_time, sender_name, category, "-", summary])
-    except Exception as e:
-        print(f"Error saving to Google Sheets: {e}")
+    # เพิ่มระบบ Retry สำหรับบันทึกลง Google Sheets ป้องกันจังหวะ Cold Start
+    for attempt in range(3):
+        try:
+            sheet = get_sheet()
+            sheet.append_row([thai_time, sender_name, category, "-", summary])
+            break
+        except Exception as e:
+            print(f"Attempt {attempt+1} - Error saving to Google Sheets: {e}")
+            time.sleep(1)
 
 def background_calendar_reminder_worker():
     notified_events = set()
