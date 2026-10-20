@@ -31,7 +31,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    gemini_client = genai.GenerativeModel('gemini-1.5-flash')
+    gemini_client = genai.GenerativeModel('gemini-3.8-flash')
 else:
     gemini_client = None
 
