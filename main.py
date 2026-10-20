@@ -238,4 +238,286 @@ def ask_gemini_agent(user_message, sheet_data, calendar_events):
     if not gemini_client:
         return {"action": "SAVE"}
 
-    sheet_json_str
+    sheet_json_str = json.dumps(sheet_data, ensure_ascii=False)
+    calendar_json_str = json.dumps(calendar_events, ensure_ascii=False)
+
+    prompt = (
+        "คุณคือ AI ผู้ช่วยอัจฉริยะของระบบครอบครัว (Family Bot) และระบบทำหน้าที่สรุปข้อมูล (Daily Summary Agent)\n"
+        "หน้าที่ของคุณคือตรวจสอบข้อความของผู้ใช้ โดยอ้างอิงจากข้อมูลใน Google Sheet และข้อมูลนัดหมายจากปฏิทินครอบครัวที่ให้ไว้อย่างเคร่งครัด\n\n"
+        "ข้อมูลนัดหมายจากปฏิทินครอบครัว (Google Calendar):\n" + calendar_json_str + "\n\n"
+        "ข้อมูลใน Google Sheet:\n" + sheet_json_str + "\n\n"
+        f"ข้อความจากผู้ใช้: \"{user_message}\"\n\n"
+        "กฎเหล็กสำหรับการค้นหาและการสรุปผล (Strict Rules):\n"
+        "1. หากผู้ใช้ถามถึงกำหนดการ นัดหมาย หรือตารางเวลา ให้ดึงข้อมูลจากข้อมูลนัดหมายจากปฏิทินครอบครัวมาตอบให้ถูกต้องและตรงประเด็นที่สุด\n"
+        "2. หากผู้ใช้สั่งสรุปข้อมูลประจำวัน ให้รวบรวมเหตุการณ์ ข้อความสนทนา อาการป่วย และรูปภาพทั้งหมดมาสรุปแยกตาม 6 หมวดหมู่ พร้อมระบุเวลาและชื่อผู้ส่งให้ชัดเจน\n"
+        "3. หากเป็นการพูดคุยทั่วไป ให้เลือก action: \"SAVE\"\n\n"
+        "ตอบกลับเป็น JSON Object เท่านั้น:\n"
+        "{\n"
+        '  "action": "FIND_IMAGE" 혹은 "SUMMARIZE" 혹은 "SAVE",\n'
+        '  "image_url": "URL หรือ null",\n'
+        '  "text_reply": "ข้อความตอบกลับผู้ใช้"\n'
+        "}"
+    )
+    try:
+        response = gemini_client.models.generate_content(
+            model='gemini-3.5-flash-lite',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Error querying Gemini: {e}")
+        return {"action": "SAVE"}
+
+def save_text_to_google_sheets(date_str, user_name, text_content, category):
+    try:
+        sheet = get_sheet()
+        row = [date_str, user_name, category, "-", text_content, "", "", ""]
+        sheet.append_row(row, value_input_option='USER_ENTERED')
+        print("Successfully saved text message to Google Sheets!")
+
+        if ADMIN_USER_ID:
+            notification_text = (
+                f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
+                f"👤 ผู้ส่ง: {user_name}\n"
+                f"📂 หมวดหมู่: {category}\n"
+                f"💬 ข้อความ: {text_content}\n"
+                f"⏰ เวลา: {date_str}"
+            )
+            line_bot_api.push_message(
+                ADMIN_USER_ID,
+                TextSendMessage(text=notification_text)
+            )
+    except Exception as e:
+        print(f"Error saving text to Google Sheets: {e}")
+
+def save_to_google_sheets(date_str, user_name, category, location, detail, image_url):
+    try:
+        sheet = get_sheet()
+        preview_formula = f'=IMAGE("{image_url}", 4, 100, 100)' if image_url else ""
+        row = [date_str, user_name, category, location, detail, "", preview_formula, image_url]
+        sheet.append_row(row, value_input_option='USER_ENTERED')
+        print("Successfully saved image to Google Sheets!")
+
+        if ADMIN_USER_ID:
+            notification_text = (
+                f"🚨 **แจ้งเตือนการบันทึกภาพใหม่**\n\n"
+                f"👤 ผู้บันทึก: {user_name}\n"
+                f"📂 หมวดหมู่: {category}\n"
+                f"📍 สถานที่: {location}\n"
+                f"📝 รายละเอียด: {detail}\n"
+                f"⏰ เวลา: {date_str}"
+            )
+            line_bot_api.push_message(
+                ADMIN_USER_ID,
+                TextSendMessage(text=notification_text)
+            )
+    except Exception as e:
+        print(f"Error saving to Google Sheets or sending notification: {e}")
+        raise e
+
+# Background Worker สำหรับคอยเช็กปฏิทินและยิงแจ้งเตือนเข้าห้องกลุ่ม LINE อัตโนมัติทุกๆ 1 นาที
+def background_calendar_reminder_worker():
+    notified_events = set()
+    while True:
+        try:
+            time.sleep(60)
+            events = get_family_calendar_events()
+            now = datetime.now(pytz.timezone('Asia/Bangkok'))
+            
+            for event in events:
+                start_str = event.get('start', {}).get('dateTime')
+                if not start_str:
+                    continue
+                
+                event_id = event.get('id')
+                event_start = datetime.fromisoformat(start_str)
+                
+                reminders_setting = event.get('reminders', {}).get('overrides', [{'minutes': 30}])
+                reminder_mins = reminders_setting[0].get('minutes', 30) if reminders_setting else 30
+                
+                trigger_time = event_start - timedelta(minutes=reminder_mins)
+                
+                time_diff = (now - trigger_time).total_seconds()
+                if 0 <= time_diff < 70 and event_id not in notified_events:
+                    summary = event.get('summary', 'ไม่มีชื่อนัดหมาย')
+                    start_time_formatted = event_start.strftime('%H:%M น.')
+                    
+                    alert_msg = (
+                        f"🚨 **แจ้งเตือนนัดหมายครอบครัว!**\n\n"
+                        f"📌 เรื่อง: {summary}\n"
+                        f"⏰ เวลาเริ่ม: {start_time_formatted}\n"
+                        f"🔔 (แจ้งเตือนล่วงหน้า {reminder_mins} นาที)"
+                    )
+                    
+                    if FAMILY_GROUP_ID and FAMILY_GROUP_ID.startswith("C"):
+                        line_bot_api.push_message(FAMILY_GROUP_ID, TextSendMessage(text=alert_msg))
+                    elif ADMIN_USER_ID:
+                        line_bot_api.push_message(ADMIN_USER_ID, TextSendMessage(text=alert_msg))
+                    
+                    notified_events.add(event_id)
+        except Exception as e:
+            print(f"Error in background reminder worker: {e}")
+
+worker_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
+worker_thread.start()
+
+@app.route("/")
+def index():
+    return "Family Travel Bot is running!"
+
+@app.route("/callback", methods=['POST'])
+def callback():
+    signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
+    try:
+        handler.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    return 'OK'
+
+@handler.add(MessageEvent, message=TextMessage)
+def handle_text_message(event):
+    user_id = event.source.user_id
+    chat_type = event.source.type
+    user_message = event.message.text.strip()
+    date_str = get_thai_time()
+    user_name = get_user_display_name(user_id)
+
+    global FAMILY_GROUP_ID
+    if chat_type in ["group", "room"]:
+        FAMILY_GROUP_ID = event.source.group_id if chat_type == "group" else event.source.room_id
+
+    # 1. บันทึกทุกข้อความลง Google Sheets เสมอ แบบ 100%
+    try:
+        sheet = get_sheet()
+        records = sheet.get_all_values()
+    except Exception:
+        records = []
+        
+    classified = classify_text_message(user_message, records)
+    category = classified.get("category", "บันทึกทั่วไป")
+    detail = classified.get("detail", user_message)
+
+    save_text_to_google_sheets(date_str, user_name, detail, category)
+
+    # 2. ตรวจสอบว่ามีเจตนาสร้างนัดหมายลงปฏิทินด้วยหรือไม่
+    calendar_event = extract_calendar_event(user_message, date_str)
+    if calendar_event:
+        success = create_google_calendar_event(calendar_event)
+        if success:
+            success_msg = f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n📌 หัวข้อ: {calendar_event.get('summary')}\n⏰ เริ่ม: {calendar_event.get('start_time')}\n🔔 แจ้งเตือนล่วงหน้า: {calendar_event.get('reminder_minutes')} นาที"
+            if chat_type in ["group", "room"]:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=success_msg))
+            elif ADMIN_USER_ID:
+                line_bot_api.push_message(ADMIN_USER_ID, TextSendMessage(text=success_msg))
+            return
+
+    # 3. ตรวจสอบว่าเป็นคำสั่งพิเศษหรือไม่ (เช่น สรุป, ค้นหารูป, หรือเรียก @Bot)
+    is_command = user_message.startswith("@Bot") or "สรุป" in user_message or "มีนัด" in user_message or "อะไร" in user_message
+
+    if not is_command:
+        return  # ถ้าเป็นข้อความพูดคุยทั่วไป บันทึกลงชีทแล้วจบการทำงานตรงนี้ ไม่ต้องตอบกลับรกกลุ่ม
+
+    clean_message = user_message.replace("@Bot", "").strip()
+
+    calendar_events = get_family_calendar_events()
+    analysis = ask_gemini_agent(clean_message, records, calendar_events)
+    action = analysis.get("action", "SAVE")
+
+    if action == "FIND_IMAGE":
+        found_url = analysis.get("image_url")
+        reply_txt = analysis.get("text_reply", "ไม่พบรูปภาพที่ค้นหาครับ")
+
+        if found_url and str(found_url).startswith("https://res.cloudinary.com"):
+            line_bot_api.reply_message(
+                event.reply_token,
+                [
+                    TextSendMessage(text=reply_txt),
+                    ImageSendMessage(original_content_url=found_url, preview_image_url=found_url)
+                ]
+            )
+            return
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=reply_txt if reply_txt else "ไม่พบรูปภาพตามที่ระบุในบันทึกครับ")
+            )
+            return
+
+    elif action == "SUMMARIZE":
+        reply_txt = analysis.get("text_reply", "สรุปข้อมูลการสนทนาวันนี้")
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply_txt)
+        )
+        return
+
+    reply_txt = analysis.get("text_reply", "รับทราบครับ")
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=reply_txt)
+    )
+    return
+
+@handler.add(MessageEvent, message=StickerMessage)
+def handle_sticker_message(event):
+    user_id = event.source.user_id
+    date_str = get_thai_time()
+    user_name = get_user_display_name(user_id)
+    
+    # บันทึกสติกเกอร์ลง Google Sheets ในหมวดหมู่บันทึกทั่วไป
+    try:
+        sheet = get_sheet()
+        row = [date_str, user_name, "บันทึกทั่วไป", "-", "(ส่งสติกเกอร์ LINE)", "", "", ""]
+        sheet.append_row(row, value_input_option='USER_ENTERED')
+        print("Successfully saved sticker message to Google Sheets!")
+    except Exception as e:
+        print(f"Error saving sticker to Google Sheets: {e}")
+
+@handler.add(MessageEvent, message=ImageMessage)
+def handle_image_message(event):
+    user_id = event.source.user_id
+    date_str = get_thai_time()
+    
+    user_name = get_user_display_name(user_id)
+
+    unique_filename = f"{event.message.id}_{uuid.uuid4().hex[:8]}.jpg"
+    image_path = os.path.join("/tmp", unique_filename)
+
+    try:
+        message_content = line_bot_api.get_message_content(event.message.id)
+        with open(image_path, 'wb') as fd:
+            for chunk in message_content.iter_content():
+                fd.write(chunk)
+    except Exception as e:
+        print(f"Error downloading image content: {e}")
+        return
+
+    try:
+        upload_result = cloudinary.uploader.upload(image_path, folder="family_bot")
+        image_url = upload_result.get('secure_url')
+    except Exception as e:
+        print(f"Cloudinary upload error: {e}")
+        if os.path.exists(image_path):
+            os.remove(image_path)
+        return
+
+    if os.path.exists(image_path):
+        os.remove(image_path)
+
+    analysis = analyze_image_with_gemini(image_path if os.path.exists(image_path) else None)
+    category = analysis.get("category", "บันทึกทั่วไป")
+    location = analysis.get("location", "-")
+    detail = analysis.get("detail", "บันทึกภาพถ่ายครอบครัว")
+
+    try:
+        save_to_google_sheets(date_str, user_name, category, location, detail, image_url)
+    except Exception as e:
+        print(f"Failed to save and notify: {e}")
+        return
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
