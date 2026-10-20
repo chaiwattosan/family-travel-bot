@@ -253,7 +253,7 @@ def ask_gemini_agent(user_message, sheet_data, calendar_events):
         "3. หากเป็นการพูดคุยทั่วไป ให้เลือก action: \"SAVE\"\n\n"
         "ตอบกลับเป็น JSON Object เท่านั้น:\n"
         "{\n"
-        '  "action": "FIND_IMAGE" 혹은 "SUMMARIZE" 혹은 "SAVE",\n'
+        '  "action": "FIND_IMAGE" หรือ "SUMMARIZE" หรือ "SAVE",\n'
         '  "image_url": "URL หรือ null",\n'
         '  "text_reply": "ข้อความตอบกลับผู้ใช้"\n'
         "}"
@@ -318,7 +318,6 @@ def save_to_google_sheets(date_str, user_name, category, location, detail, image
         print(f"Error saving to Google Sheets or sending notification: {e}")
         raise e
 
-# Background Worker สำหรับคอยเช็กปฏิทินและยิงแจ้งเตือนเข้าห้องกลุ่ม LINE อัตโนมัติทุกๆ 1 นาที
 def background_calendar_reminder_worker():
     notified_events = set()
     while True:
@@ -390,7 +389,6 @@ def handle_text_message(event):
     if chat_type in ["group", "room"]:
         FAMILY_GROUP_ID = event.source.group_id if chat_type == "group" else event.source.room_id
 
-    # 1. บันทึกทุกข้อความลง Google Sheets เสมอ แบบ 100%
     try:
         sheet = get_sheet()
         records = sheet.get_all_values()
@@ -403,7 +401,6 @@ def handle_text_message(event):
 
     save_text_to_google_sheets(date_str, user_name, detail, category)
 
-    # 2. ตรวจสอบว่ามีเจตนาสร้างนัดหมายลงปฏิทินด้วยหรือไม่
     calendar_event = extract_calendar_event(user_message, date_str)
     if calendar_event:
         success = create_google_calendar_event(calendar_event)
@@ -415,11 +412,10 @@ def handle_text_message(event):
                 line_bot_api.push_message(ADMIN_USER_ID, TextSendMessage(text=success_msg))
             return
 
-    # 3. ตรวจสอบว่าเป็นคำสั่งพิเศษหรือไม่ (เช่น สรุป, ค้นหารูป, หรือเรียก @Bot)
     is_command = user_message.startswith("@Bot") or "สรุป" in user_message or "มีนัด" in user_message or "อะไร" in user_message
 
     if not is_command:
-        return  # ถ้าเป็นข้อความพูดคุยทั่วไป บันทึกลงชีทแล้วจบการทำงานตรงนี้ ไม่ต้องตอบกลับรกกลุ่ม
+        return
 
     clean_message = user_message.replace("@Bot", "").strip()
 
@@ -468,7 +464,6 @@ def handle_sticker_message(event):
     date_str = get_thai_time()
     user_name = get_user_display_name(user_id)
     
-    # บันทึกสติกเกอร์ลง Google Sheets ในหมวดหมู่บันทึกทั่วไป
     try:
         sheet = get_sheet()
         row = [date_str, user_name, "บันทึกทั่วไป", "-", "(ส่งสติกเกอร์ LINE)", "", "", ""]
@@ -481,7 +476,6 @@ def handle_sticker_message(event):
 def handle_image_message(event):
     user_id = event.source.user_id
     date_str = get_thai_time()
-    
     user_name = get_user_display_name(user_id)
 
     unique_filename = f"{event.message.id}_{uuid.uuid4().hex[:8]}.jpg"
