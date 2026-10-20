@@ -6,4 +6,4 @@ google-auth==2.28.0
 gunicorn==21.2.0
 google-api-python-client==2.118.0
 pytz==2024.1
-google-generativeai
+google-genai
