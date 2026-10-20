@@ -14,7 +14,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-# ใช้ SDK ตัวใหม่ล่าสุดตามคำแนะนำของ Google
 from google import genai
 
 app = Flask(__name__)
@@ -30,7 +29,6 @@ FAMILY_CALENDAR_ID = os.environ.get('FAMILY_CALENDAR_ID', 'primary')
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# ตั้งค่า Client ของ Google GenAI ตัวใหม่
 if GEMINI_API_KEY:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 else:
@@ -153,7 +151,6 @@ def add_to_calendar(summary, start_time_str, reminder_minutes=30):
         print(f"Error adding to calendar: {e}")
         return None
 
-# ระบบดึงอีเวนต์และแจ้งเตือนล่วงหน้า
 def background_calendar_reminder_worker():
     notified_events = set()
     while True:
@@ -222,7 +219,6 @@ def handle_text_message(event):
         timestamp = event.timestamp
         thai_time = get_thai_time(timestamp)
 
-        # 1. ตรวจสอบนัดหมายปฏิทิน
         cal_intent = parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
             summary = cal_intent.get("summary", "นัดหมายครอบครัว")
@@ -243,7 +239,6 @@ def handle_text_message(event):
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 return
 
-        # 2. บันทึกข้อความทั่วไปลง Google Sheets พร้อมระบบ Retry
         category, summary_text = analyze_text_with_gemini(msg_text)
         for attempt in range(3):
             try:
@@ -254,7 +249,6 @@ def handle_text_message(event):
                 print(f"Attempt {attempt+1} - Error saving to Google Sheets: {e}")
                 time.sleep(1)
 
-        # 3. ส่ง Log รายงานส่วนตัวหา Admin
         if ADMIN_USER_ID:
             admin_msg = (
                 f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
