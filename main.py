@@ -35,6 +35,9 @@ if GEMINI_API_KEY:
 else:
     gemini_client = None
 
+# ชื่อโมเดล Gemini — เปลี่ยนรุ่นครั้งต่อไปแก้บรรทัดนี้บรรทัดเดียว (free tier: 3.5-flash-lite = 500 ครั้ง/วัน)
+GEMINI_MODEL = 'gemini-3.5-flash-lite'
+
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/calendar'
@@ -78,7 +81,7 @@ def analyze_text_with_gemini(text):
     for attempt in range(3):
         try:
             response = gemini_client.models.generate_content(
-                model='gemini-3.8-flash',
+                model=GEMINI_MODEL,
                 contents=f"""
 วิเคราะห์ข้อความนี้: "{text}"
 จัดหมวดหมู่ให้อยู่ในประเภทใดประเภทหนึ่งต่อไปนี้เท่านั้น:
@@ -105,7 +108,7 @@ def parse_calendar_intent(text):
     for attempt in range(3):
         try:
             response = gemini_client.models.generate_content(
-                model='gemini-3.8-flash',
+                model=GEMINI_MODEL,
                 contents=f"""
 วิเคราะห์ข้อความนี้อย่างละเอียดว่าเป็น "คำสั่งหรือความต้องการให้นัดหมาย/บันทึกปฏิทินอย่างแท้จริง" หรือไม่: "{text}"
 
@@ -177,31 +180,36 @@ def background_calendar_reminder_worker():
                 event_id = event['id']
                 if event_id in notified_events:
                     continue
-                
+
                 start_str = event['start'].get('dateTime') or event['start'].get('date')
                 if 'T' not in start_str:
                     continue
-                
+
                 start_dt = datetime.fromisoformat(start_str).astimezone(tz)
                 diff_minutes = (start_dt - now).total_seconds() / 60
 
                 if 0 <= diff_minutes <= 30:
                     summary = event.get('summary', 'ไม่มีหัวข้อ')
                     time_formatted = start_dt.strftime('%H:%M น.')
-                    
+
                     alert_text = (
                         f"⏰ **แจ้งเตือนกำหนดการใกล้ถึงเวลา!**\n"
                         f"📌 เรื่อง: {summary}\n"
                         f"🕒 เวลา: {time_formatted}"
                     )
-                    
+
                     target_id = FAMILY_GROUP_ID if FAMILY_GROUP_ID else ADMIN_USER_ID
                     if target_id:
                         line_bot_api.push_message(target_id, TextSendMessage(text=alert_text))
-                    
+
                     notified_events.add(event_id)
         except Exception as e:
             print(f"Reminder worker error: {e}")
+
+# เริ่มเธรดเตือนนัดหมายตั้งแต่ตอน import โมดูล — ต้องอยู่นอก if __name__
+# ไม่งั้นตอนรันใต้ gunicorn บน Render เธรดนี้จะไม่เริ่มทำงานเลย
+reminder_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
+reminder_thread.start()
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -228,7 +236,7 @@ def handle_text_message(event):
             summary = cal_intent.get("summary", "นัดหมายครอบครัว")
             start_time = cal_intent.get("start_time")
             reminder_mins = cal_intent.get("reminder_minutes", 30)
-            
+
             if start_time:
                 res = add_to_calendar(summary, start_time, reminder_mins)
                 if res:
@@ -272,8 +280,5 @@ def handle_text_message(event):
         print(f"Error handling message: {e}")
 
 if __name__ == "__main__":
-    reminder_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
-    reminder_thread.start()
-    
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
