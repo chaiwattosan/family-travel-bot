@@ -319,6 +319,7 @@ def save_to_google_sheets(date_str, user_name, category, location, detail, image
         print(f"Error saving to Google Sheets or sending notification: {e}")
         raise e
 
+# Background Worker สำหรับคอยเช็กปฏิทินและยิงแจ้งเตือนเข้าห้องกลุ่ม LINE อัตโนมัติ พร้อมระบบเช็คย้อนหลัง (Catch-up)
 def background_calendar_reminder_worker():
     notified_events = set()
     while True:
@@ -341,7 +342,10 @@ def background_calendar_reminder_worker():
                 trigger_time = event_start - timedelta(minutes=reminder_mins)
                 
                 time_diff = (now - trigger_time).total_seconds()
-                if 0 <= time_diff < 70 and event_id not in notified_events:
+                
+                # ระบบเช็คย้อนหลัง (Catch-up): หากเวลาปัจจุบันเลยเวลาแจ้งเตือนไปแล้วไม่เกิน 15 นาที (900 วินาที) 
+                # และยังไม่เคยแจ้งเตือนอีเวนต์นี้ บอตจะทำการยิงแจ้งเตือนทันทีแม้เซิร์ฟเวอร์จะเพิ่งตื่น
+                if 0 <= time_diff < 900 and event_id not in notified_events:
                     summary = event.get('summary', 'ไม่มีชื่อนัดหมาย')
                     start_time_formatted = event_start.strftime('%H:%M น.')
                     
@@ -360,9 +364,6 @@ def background_calendar_reminder_worker():
                     notified_events.add(event_id)
         except Exception as e:
             print(f"Error in background reminder worker: {e}")
-
-worker_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
-worker_thread.start()
 
 @app.route("/")
 def index():
