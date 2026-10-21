@@ -29,6 +29,11 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 FAMILY_GROUP_ID = os.environ.get('FAMILY_GROUP_ID')
 FAMILY_CALENDAR_ID = os.environ.get('FAMILY_CALENDAR_ID', 'primary')
 
+# ลิงก์เว็บแอปครัว (Apps Script) — ค่าเริ่มต้นเป็น /dev สำหรับทดสอบเอง
+# พอ deploy เป็น /exec แล้ว ให้ตั้ง env KITCHEN_APP_URL ทับได้เลย ไม่ต้องแก้โค้ด
+KITCHEN_APP_URL = os.environ.get('KITCHEN_APP_URL', 'https://script.google.com/macros/s/AKfycbyRe-pHPpJ_5q9tPDPyJJ3ZyVY-qycfRsdNcPR4dw/dev')
+KITCHEN_KEYWORDS = {'ครัว', 'เปิดครัว', 'สต็อก', 'สต๊อก', 'stock', 'เมนู', 'สูตร', 'สูตรอาหาร', 'รายการซื้อ'}
+
 # กำหนด User ID ส่วนตัวของคุณ Chaiwat สำหรับส่งรายงานแจ้งเตือนแอดมินโดยตรง
 ADMIN_USER_ID = "U4408dd0ab71b56db6074273eb28651b0"
 
@@ -368,8 +373,18 @@ def callback():
 def handle_text_message(event):
     try:
         user_id = event.source.user_id
-        sender_name = get_user_display_name(user_id)
         msg_text = event.message.text
+
+        # 0. คำสั่งเปิดแอปครัว: พิมพ์คีย์เวิร์ดสั้น ๆ บอทตอบลิงก์เว็บแอปทันที (ไม่ผ่าน AI ไม่ลง log ไม่ต้องดึงโปรไฟล์)
+        if msg_text.strip().lower() in KITCHEN_KEYWORDS:
+            if KITCHEN_APP_URL:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text=f"🍳 **ครัวครอบครัว**\nเปิดดูสต็อกวัตถุดิบ เมนู และสูตรอาหารได้ที่นี่:\n{KITCHEN_APP_URL}")
+                )
+            return
+
+        sender_name = get_user_display_name(user_id)
         # พิมพ์ source id ลง log — ใช้หา FAMILY_GROUP_ID จาก Render Logs (ส่งข้อความในกลุ่มแล้วดูค่า group:)
         print(f"Source -> user:{user_id} group:{getattr(event.source, 'group_id', None)} room:{getattr(event.source, 'room_id', None)}")
         timestamp = event.timestamp
