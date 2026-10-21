@@ -105,6 +105,7 @@ def analyze_text_with_gemini(text):
 def parse_calendar_intent(text):
     if not gemini_client:
         return None
+    now_thai_str = datetime.now(pytz.timezone('Asia/Bangkok')).strftime('%Y-%m-%d %H:%M:%S')
     for attempt in range(3):
         try:
             response = gemini_client.models.generate_content(
@@ -112,10 +113,16 @@ def parse_calendar_intent(text):
                 contents=f"""
 วิเคราะห์ข้อความนี้อย่างละเอียดว่าเป็น "คำสั่งหรือความต้องการให้นัดหมาย/บันทึกปฏิทินอย่างแท้จริง" หรือไม่: "{text}"
 
+เวลาปัจจุบัน (ไทย): {now_thai_str} — ใช้เป็นจุดอ้างอิงแปลงคำว่า วันนี้/คืนนี้/พรุ่งนี้/มะรืนนี้ ให้เป็นวันที่จริง
+
 กฎเหล็กขั้นเด็ดขาดในการตัดสินใจ (is_calendar ต้องเป็น true ก็ต่อเมื่อผ่านทุกข้อ):
-1. ข้อความต้องระบุทั้ง "วัน" และ "เวลาที่เจาะจง" อย่างชัดเจน
+1. ข้อความต้องระบุทั้ง "วัน" และ "เวลาที่เจาะจง" อย่างชัดเจน (ถ้าไม่มีเวลาที่เจาะจง ห้ามเดา ให้ตอบ false ทันที)
 2. ข้อความนั้นต้องมีบริบทเชิง "การนัดหมาย, กำหนดการทางการ, หรือคำสั่งให้เตือน"
-3. หากเป็นการพิมพ์พูดคุยสนทนาทั่วไป ให้ถือว่าไม่ใช่ (is_calendar: false ทันที)
+3. หากเป็นการพิมพ์พูดคุยสนทนาทั่วไป เล่าเรื่อง หรือแค่บอกแผนลอย ๆ โดยไม่มีคำสั่งใด ๆ ให้ถือว่าไม่ใช่ (is_calendar: false ทันที)
+
+ข้อยกเว้นสำคัญ (ใช้แทนกฎข้อ 3): ถ้าข้อความมี "คำสั่งชัด" เช่น นัดหมาย / ตั้งเตือน / แจ้งเตือน / บันทึกนัด / เตือนด้วย ประกอบกับเวลาที่เจาะจงตามข้อ 1 ให้ถือว่าเป็นนัดหมายทันที (is_calendar: true) ไม่ว่ากิจกรรมจะเป็นเรื่องส่วนตัวหรือกิจวัตรประจำวันใด ๆ ก็ตาม เช่น เตรียมเข้านอน, ทานยา, ออกกำลังกาย เพราะผู้ใช้ตั้งใจสั่งให้ระบบเตือน
+
+ถ้าข้อความระบุให้เตือนล่วงหน้า เช่น "เตือนก่อน 15 นาที" ให้ตั้ง reminder_minutes ตามนั้น (ถ้าไม่ระบุใช้ 30)
 
 ตอบกลับในรูปแบบ JSON เท่านั้น:
 {{
@@ -210,6 +217,11 @@ def background_calendar_reminder_worker():
 # ไม่งั้นตอนรันใต้ gunicorn บน Render เธรดนี้จะไม่เริ่มทำงานเลย
 reminder_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
 reminder_thread.start()
+
+@app.route("/", methods=['GET'])
+def index():
+    # หน้าเช็กสถานะ: เปิด URL หลักในเบราว์เซอร์ หรือให้ UptimeRobot ping จะได้คำตอบ 200 OK
+    return "Family Travel & Kitchen Bot is running!", 200
 
 @app.route("/callback", methods=['POST'])
 def callback():
