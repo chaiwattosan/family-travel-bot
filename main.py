@@ -32,7 +32,7 @@ FAMILY_CALENDAR_ID = os.environ.get('FAMILY_CALENDAR_ID', 'primary')
 # ลิงก์เว็บแอปครัว (Apps Script) — ค่าเริ่มต้นเป็น /dev สำหรับทดสอบเอง
 # พอ deploy เป็น /exec แล้ว ให้ตั้ง env KITCHEN_APP_URL ทับได้เลย ไม่ต้องแก้โค้ด
 KITCHEN_APP_URL = os.environ.get('KITCHEN_APP_URL', 'https://script.google.com/macros/s/AKfycbyRe-pHPpJ_5q9tPDPyJJ3ZyVY-qycfRsdNcPR4dw/dev')
-KITCHEN_KEYWORDS = {'ครัว', 'เปิดครัว', 'สต็อก', 'สต๊อก', 'stock', 'เมนู', 'สูตร', 'สูตรอาหาร', 'รายการซื้อ'}
+KITCHEN_KEYWORDS = {'ครัว', 'เปิดครัว', 'สต็อก', 'สต๊อก', 'stock', 'เมนู', 'สูตร', 'สูตรอาหาร', 'รายการซื้อ', 'สุขภาพ'}
 
 # กำหนด User ID ส่วนตัวของคุณ Chaiwat สำหรับส่งรายงานแจ้งเตือนแอดมินโดยตรง
 ADMIN_USER_ID = "U4408dd0ab71b56db6074273eb28651b0"
@@ -380,7 +380,7 @@ def handle_text_message(event):
             if KITCHEN_APP_URL:
                 line_bot_api.reply_message(
                     event.reply_token,
-                    TextSendMessage(text=f"🍳 **ครัวครอบครัว**\nเปิดดูสต็อกวัตถุดิบ เมนู และสูตรอาหารได้ที่นี่:\n{KITCHEN_APP_URL}")
+                    TextSendMessage(text=f"🍳💚 **ครัวและสุขภาพ บ้านตั้งทอง**\nเปิดดูเมนู สูตรอาหาร สต็อกวัตถุดิบ และอัปเดตสุขภาพครอบครัวได้ที่นี่:\n{KITCHEN_APP_URL}")
                 )
             return
 
