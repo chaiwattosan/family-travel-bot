@@ -369,6 +369,140 @@ def callback():
         abort(400)
     return 'OK'
 
+# ===== โหมดถาม-ตอบตารางนัด / วันพระ (เพิ่ม 21 ต.ค. 2569) =====
+# ตอบคำถามเรื่องตารางจากปฏิทินครอบครัวจริง: วันพระตอบด้วยโค้ดล้วน ๆ (แม่น ไม่ใช้ AI)
+# ส่วนคำถามนัดทั่วไป ส่งรายการนัดให้ Gemini ช่วยจับคู่ความหมาย (เช่น "ไป รพ." = "พบหมอ") แล้วเรียบเรียงคำตอบ
+THAI_WEEKDAYS = ['วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัสบดี', 'วันศุกร์', 'วันเสาร์', 'วันอาทิตย์']
+THAI_MONTHS = ['', 'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+               'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม']
+QA_CREATE_VERBS = ['นัดหมาย', 'ตั้งเตือน', 'ตั้งนัด', 'จองนัด', 'เพิ่มนัด', 'บันทึกนัด']
+QA_QUESTION_CUES = ['ไหม', 'มั้ย', 'เมื่อไหร่', 'เมื่อไร', 'วันไหน', 'อะไรบ้าง', 'บ้าง', 'หรือเปล่า', 'กี่โมง', 'มีใคร', 'เหลือ']
+
+def is_schedule_question(text):
+    t = text.strip()
+    # มีคำสั่งสร้างนัดชัด ๆ → ไม่แย่ง ให้ไหลไปโหมดสร้างนัดตามเดิม
+    if any(v in t for v in QA_CREATE_VERBS):
+        return False
+    if 'วันพระ' in t and any(c in t for c in QA_QUESTION_CUES + ['ถัดไป', 'จะถึง', 'เดือนนี้']):
+        return True
+    if ('นัด' in t or 'ตาราง' in t) and any(c in t for c in QA_QUESTION_CUES):
+        return True
+    if any(w in t for w in ['อาทิตย์นี้', 'สัปดาห์นี้', 'อาทิตย์หน้า', 'สัปดาห์หน้า']) and 'นัด' in t:
+        return True
+    return False
+
+def fmt_thai_date(dt):
+    return f"{THAI_WEEKDAYS[dt.weekday()]}ที่ {dt.day} {THAI_MONTHS[dt.month]} {dt.year + 543}"
+
+def fmt_thai_datetime(dt):
+    return f"{fmt_thai_date(dt)} เวลา {dt.strftime('%H:%M')} น."
+
+def fetch_upcoming_events(days=30):
+    tz = pytz.timezone('Asia/Bangkok')
+    now = datetime.now(tz)
+    service = get_calendar_service()
+    res = service.events().list(
+        calendarId=FAMILY_CALENDAR_ID,
+        timeMin=now.isoformat(),
+        timeMax=(now + timedelta(days=days)).isoformat(),
+        singleEvents=True,
+        orderBy='startTime',
+        maxResults=100,
+    ).execute()
+    out = []
+    for e in res.get('items', []):
+        s = e.get('start', {}).get('dateTime')
+        if not s:
+            continue  # ข้าม event แบบทั้งวัน (แบบเดียวกับตัวเตือน)
+        out.append({
+            'summary': e.get('summary', 'ไม่มีหัวข้อ'),
+            'start': datetime.fromisoformat(s).astimezone(tz),
+            'description': e.get('description', '') or '',
+        })
+    return out
+
+def answer_wan_phra(text, events):
+    tz = pytz.timezone('Asia/Bangkok')
+    today = datetime.now(tz).date()
+    wp = [e for e in events if 'วันพระ' in e['summary']]
+    if not wp:
+        return "ยังไม่มีข้อมูลวันพระในปฏิทินครอบครัวครับ"
+    if 'เดือนนี้' in text:
+        rest = [e for e in wp if e['start'].year == today.year and e['start'].month == today.month]
+        if not rest:
+            return f"เดือน{THAI_MONTHS[today.month]}นี้ไม่มีวันพระเหลือแล้วครับ"
+        lines = [f"🙏 วันพระที่เหลือในเดือน{THAI_MONTHS[today.month]} {today.year + 543}:"]
+        for e in rest:
+            lines.append(f"• {fmt_thai_date(e['start'])} — {e['summary']}")
+        return "\n".join(lines)
+    nxt = wp[0]
+    delta = (nxt['start'].date() - today).days
+    when = "วันนี้เลยครับ" if delta == 0 else ("พรุ่งนี้ครับ" if delta == 1 else f"อีก {delta} วันครับ")
+    return f"🙏 {nxt['summary']} ถัดไปคือ {fmt_thai_date(nxt['start'])} — {when}"
+
+def answer_schedule_question(text):
+    events = fetch_upcoming_events(30)
+    # คำถามวันพระตอบด้วยโค้ดล้วน ๆ (แม่นยำ ไม่ต้องใช้ AI)
+    if 'วันพระ' in text:
+        return answer_wan_phra(text, events)
+    if not events:
+        return "ช่วง 30 วันข้างหน้านี้ ยังไม่มีนัดอะไรในปฏิทินครอบครัวเลยครับ"
+    tz = pytz.timezone('Asia/Bangkok')
+    now = datetime.now(tz)
+    # เลือกกรอบเวลาตามคำถาม: อาทิตย์หน้า / อาทิตย์นี้ / เดือนนี้ / ไม่ระบุ = 14 วัน
+    if 'อาทิตย์หน้า' in text or 'สัปดาห์หน้า' in text:
+        start = (now + timedelta(days=7 - now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=7)
+    elif 'เดือนนี้' in text:
+        start, end = now, now + timedelta(days=30)
+    elif 'อาทิตย์นี้' in text or 'สัปดาห์นี้' in text:
+        start = now
+        end = (now + timedelta(days=6 - now.weekday())).replace(hour=23, minute=59, second=59, microsecond=0)
+    else:
+        start, end = now, now + timedelta(days=14)
+    sel = [e for e in events if start <= e['start'] < end]
+    if not sel:
+        return "ช่วงที่ถาม ยังไม่มีนัดในปฏิทินครอบครัวครับ"
+    # ยุบ event กิจวัตรที่ชื่อซ้ำกันเยอะ ๆ (เช่น เปิดไฟหน้าบ้านทุกวัน) ให้เหลือรายการเดียว กันคำตอบรก
+    counts = {}
+    for e in sel:
+        counts[e['summary']] = counts.get(e['summary'], 0) + 1
+    seen, listing_lines = set(), []
+    for e in sel:
+        if e['summary'] in seen:
+            continue
+        seen.add(e['summary'])
+        line = f"- {fmt_thai_datetime(e['start'])}: {e['summary']}"
+        if e['description']:
+            line += f" ({e['description']})"
+        if counts[e['summary']] > 1:
+            line += f" [กิจวัตรซ้ำ {counts[e['summary']]} ครั้งในช่วงนี้]"
+        listing_lines.append(line)
+    listing = "\n".join(listing_lines)
+    # ให้ AI ช่วยจับคู่ความหมายแล้วเรียบเรียงคำตอบ — ตอบจากรายการนี้เท่านั้น
+    if gemini_client:
+        for attempt in range(2):
+            try:
+                response = gemini_client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=f"""
+คำถามจากสมาชิกในครอบครัว: "{text}"
+
+รายการนัดในปฏิทินครอบครัว (เฉพาะช่วงที่เกี่ยวข้อง):
+{listing}
+
+ตอบคำถามเป็นภาษาไทย สั้น กระชับ เป็นกันเอง ใช้ข้อมูลจากรายการนัดข้างบนเท่านั้น ห้ามแต่งนัดที่ไม่มีในรายการเด็ดขาด
+ถ้าในรายการไม่มีนัดที่ตรงกับคำถาม ให้ตอบว่าไม่มีนัดลักษณะนั้นในช่วงนี้
+ขึ้นต้นคำตอบด้วย 📅 และลงท้ายประโยคด้วย "ครับ"
+""",
+                )
+                ans = (response.text or "").strip()
+                if ans:
+                    return ans
+            except Exception as e:
+                print(f"Schedule Q&A Gemini attempt {attempt+1} error: {e}")
+    return "📅 นัดที่จะถึง:\n" + listing
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     try:
@@ -390,8 +524,19 @@ def handle_text_message(event):
         timestamp = event.timestamp
         thai_time = get_thai_time(timestamp)
 
-        # 1. ตรวจสอบนัดหมายปฏิทิน
-        cal_intent = parse_calendar_intent(msg_text)
+        # 0.5 ถาม-ตอบตารางนัด/วันพระ: ถ้าเป็นคำถามเรื่องตาราง ให้ตอบจากปฏิทินจริงก่อน
+        # (ตอบแล้วข้ามโหมดสร้างนัด แต่ยังไหลไปบันทึก log + แจ้งแอดมินตามปกติ)
+        qa_answer = None
+        if is_schedule_question(msg_text):
+            try:
+                qa_answer = answer_schedule_question(msg_text)
+            except Exception as e:
+                print(f"Schedule Q&A error: {e}")
+        if qa_answer:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=qa_answer))
+
+        # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5)
+        cal_intent = None if qa_answer else parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
             summary = cal_intent.get("summary", "นัดหมายครอบครัว")
             start_time = cal_intent.get("start_time")
