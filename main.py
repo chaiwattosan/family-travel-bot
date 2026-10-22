@@ -306,11 +306,21 @@ def parse_remind_marker(description):
     except Exception:
         return None
 
+def reminder_due(fire_time, now, grace_minutes=5):
+    # ถึงเวลาเตือนหรือยัง: ยิงได้ตั้งแต่ fire_time ถึง fire_time + grace (เผื่อรอบเช็กคลาด/process เพิ่งตื่น)
+    return fire_time <= now <= fire_time + timedelta(minutes=grace_minutes)
+
 def background_calendar_reminder_worker():
     notified = set()
+    # รอบแรกหลัง process เริ่ม/รีสตาร์ต: เช็กทันทีไม่ต้องรอ 60 วิ + เผื่อย้อนหลัง 15 นาที
+    # (บทเรียน 22 ต.ค.: deploy รอบเย็นทับจังหวะเตือนเปิดไฟ 18:00 พอดี — เธรดเริ่มช้า หน้าต่างเดิม 5 นาทีเลยหลุดเงียบ ๆ)
+    first_pass = True
     while True:
         try:
-            time.sleep(60)
+            if not first_pass:
+                time.sleep(60)
+            grace = 15 if first_pass else 5
+            first_pass = False
             service = get_calendar_service()
             tz = pytz.timezone('Asia/Bangkok')
             now = datetime.now(tz)
@@ -342,8 +352,8 @@ def background_calendar_reminder_worker():
 
                 for minutes in offsets:
                     fire_time = start_dt - timedelta(minutes=minutes)
-                    # ยิงเมื่อถึงเวลาเตือน (เผื่อย้อนหลัง 5 นาที กันรอบเช็กคลาดหรือเครื่องเพิ่งตื่น)
-                    if fire_time <= now <= fire_time + timedelta(minutes=5):
+                    # ยิงเมื่อถึงเวลาเตือน (เผื่อย้อนหลังตาม grace — 5 นาทีปกติ, 15 นาทีเฉพาะรอบแรกหลังรีสตาร์ต)
+                    if reminder_due(fire_time, now, grace):
                         key = f"{event['id']}|{start_str}|{minutes}"
                         if key in notified:
                             continue
@@ -508,18 +518,21 @@ def answer_schedule_question(text):
     if not sel:
         return "ช่วงที่ถาม ยังไม่มีนัดในปฏิทินครอบครัวครับ"
     # ยุบ event กิจวัตรที่ชื่อซ้ำกันเยอะ ๆ (เช่น เปิดไฟหน้าบ้านทุกวัน) ให้เหลือรายการเดียว กันคำตอบรก
+    # ยกเว้น "วันพระ": ชื่อซ้ำกันทุกครั้งแต่เป็นคนละวันที่มีความหมาย — ยุบแล้วคำตอบจะเหลือแค่วันแรก
+    # (เคสจริง 22 ต.ค.: ถามนัดเดือน พ.ย. คำตอบโผล่แค่วันพระ 3 กับ 24 พ.ย. เพราะ 9/17 โดนยุบ ส่วน 24 รอดเพราะชื่อต่างเป็น "วันพระ (วันลอยกระทง)")
     counts = {}
     for e in sel:
         counts[e['summary']] = counts.get(e['summary'], 0) + 1
     seen, listing_lines = set(), []
     for e in sel:
-        if e['summary'] in seen:
+        dedupable = 'วันพระ' not in e['summary']
+        if dedupable and e['summary'] in seen:
             continue
         seen.add(e['summary'])
         line = f"- {fmt_thai_datetime(e['start'])}: {e['summary']}"
         if e['description']:
             line += f" ({e['description']})"
-        if counts[e['summary']] > 1:
+        if dedupable and counts[e['summary']] > 1:
             line += f" [กิจวัตรซ้ำ {counts[e['summary']]} ครั้งในช่วงนี้]"
         listing_lines.append(line)
     listing = "\n".join(listing_lines)
