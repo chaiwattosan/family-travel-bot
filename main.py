@@ -38,6 +38,11 @@ KITCHEN_KEYWORDS = {'ครัว', 'เปิดครัว', 'สต็อก
 # กำหนด User ID ส่วนตัวของคุณ Chaiwat สำหรับส่งรายงานแจ้งเตือนแอดมินโดยตรง
 ADMIN_USER_ID = "U4408dd0ab71b56db6074273eb28651b0"
 
+# [Train] ใช้ push_message ซึ่งนับเข้าโควตา LINE แผนฟรี (200 ข้อความ/เดือน) ทุกข้อความ
+# เคยเผาโควตาหมดกลางเดือน (429 "You have reached your monthly limit" 23 ต.ค. 2026) จนตัวเตือนนัด (push เช่นกัน) ยิงไม่ได้
+# ค่าเริ่มต้น = ปิด (log ยังลง Google Sheets ครบเหมือนเดิม) — เปิดเฉพาะตอนเทรน/ดีบักด้วย env TRAIN_PUSH_ENABLED=1 บน Render
+TRAIN_PUSH_ENABLED = os.environ.get('TRAIN_PUSH_ENABLED', '0') == '1'
+
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
@@ -185,6 +190,8 @@ def append_log_row(row):
 
 def notify_admin(sender_name, category, summary_text, thai_time, extra_url=None):
     if not ADMIN_USER_ID:
+        return
+    if not TRAIN_PUSH_ENABLED:
         return
     admin_msg = (
         f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
@@ -1077,8 +1084,8 @@ def handle_text_message(event):
                 print(f"Attempt {attempt+1} - Error saving to Google Sheets: {e}")
                 time.sleep(1)
 
-        # 3. ส่ง Log รายงานส่วนตัวไปหาแอดมินโดยตรง
-        if ADMIN_USER_ID:
+        # 3. ส่ง Log รายงานส่วนตัวไปหาแอดมินโดยตรง (push — เปิดเฉพาะเมื่อ TRAIN_PUSH_ENABLED=1 กันโควตาหมด)
+        if ADMIN_USER_ID and TRAIN_PUSH_ENABLED:
             admin_msg = (
                 f"📝 **[Train] แจ้งเตือนข้อความใหม่**\n\n"
                 f"👤 ผู้ส่ง: {sender_name}\n"
