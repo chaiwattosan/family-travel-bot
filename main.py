@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import time
 import hashlib
@@ -265,6 +266,7 @@ def add_to_calendar(summary, start_time_str, reminder_minutes_list=None, recurre
 
         event = {
             'summary': summary,
+            'description': remind_marker([int(m) for m in reminder_minutes_list[:5]]),
             'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Asia/Bangkok'},
             'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Bangkok'},
             'reminders': {
@@ -284,6 +286,24 @@ def add_to_calendar(summary, start_time_str, reminder_minutes_list=None, recurre
         return event_result.get('htmlLink')
     except Exception as e:
         print(f"Error adding to calendar: {e}")
+        return None
+
+def remind_marker(minutes_list):
+    # เครื่องหมายเลขเตือนที่บอทฝังท้าย description ของ event ที่ตัวเองสร้าง: [remind:1440,180]
+    # เหตุผล: reminder overrides ที่ service account ตั้งตอน insert/patch ไม่ติดจริงบนปฏิทินครอบครัว
+    # (เจอ 2 ครั้ง 22 ต.ค. — นัดสรุปจากบทสนทนา + เที่ยวบิน) ตัวเตือนจึงอ่านเลขจากเครื่องหมายนี้แทนเมื่อ event เป็น useDefault
+    return "[remind:" + ",".join(str(int(m)) for m in minutes_list) + "]"
+
+def parse_remind_marker(description):
+    if not description:
+        return None
+    m = re.search(r'\[remind:([0-9,]+)\]', description)
+    if not m:
+        return None
+    try:
+        vals = [int(x) for x in m.group(1).split(',') if x.strip()]
+        return vals[:5] or None
+    except Exception:
         return None
 
 def background_calendar_reminder_worker():
@@ -313,9 +333,10 @@ def background_calendar_reminder_worker():
                 start_dt = datetime.fromisoformat(start_str).astimezone(tz)
 
                 # อ่านเวลาเตือนจากตัว event เอง — ถ้า event ใช้ค่ามาตรฐานของปฏิทิน ให้ถือว่าเตือนก่อน 30 นาที
+                # ยกเว้น event ที่บอทสร้างเอง: อ่านเลขเตือนจากเครื่องหมาย [remind:...] ท้าย description แทน
                 reminders = event.get('reminders', {})
                 if reminders.get('useDefault', True):
-                    offsets = [30]
+                    offsets = parse_remind_marker(event.get('description', '')) or [30]
                 else:
                     offsets = [r.get('minutes', 30) for r in reminders.get('overrides', [])] or [30]
 
@@ -401,7 +422,7 @@ def fmt_thai_date(dt):
 def fmt_thai_datetime(dt):
     return f"{fmt_thai_date(dt)} เวลา {dt.strftime('%H:%M')} น."
 
-def fetch_upcoming_events(days=30):
+def fetch_upcoming_events(days=30, max_results=100):
     tz = pytz.timezone('Asia/Bangkok')
     now = datetime.now(tz)
     service = get_calendar_service()
@@ -411,7 +432,7 @@ def fetch_upcoming_events(days=30):
         timeMax=(now + timedelta(days=days)).isoformat(),
         singleEvents=True,
         orderBy='startTime',
-        maxResults=100,
+        maxResults=max_results,
     ).execute()
     out = []
     for e in res.get('items', []):
@@ -431,6 +452,15 @@ def answer_wan_phra(text, events):
     wp = [e for e in events if 'วันพระ' in e['summary']]
     if not wp:
         return "ยังไม่มีข้อมูลวันพระในปฏิทินครอบครัวครับ"
+    if 'เดือนหน้า' in text:
+        first_next = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+        rest = [e for e in wp if e['start'].year == first_next.year and e['start'].month == first_next.month]
+        if not rest:
+            return f"เดือน{THAI_MONTHS[first_next.month]} {first_next.year + 543} ไม่มีวันพระในปฏิทินครอบครัวครับ"
+        lines = [f"🙏 วันพระในเดือน{THAI_MONTHS[first_next.month]} {first_next.year + 543}:"]
+        for e in rest:
+            lines.append(f"• {fmt_thai_date(e['start'])} — {e['summary']}")
+        return "\n".join(lines)
     if 'เดือนนี้' in text:
         rest = [e for e in wp if e['start'].year == today.year and e['start'].month == today.month]
         if not rest:
@@ -444,26 +474,36 @@ def answer_wan_phra(text, events):
     when = "วันนี้เลยครับ" if delta == 0 else ("พรุ่งนี้ครับ" if delta == 1 else f"อีก {delta} วันครับ")
     return f"🙏 {nxt['summary']} ถัดไปคือ {fmt_thai_date(nxt['start'])} — {when}"
 
+def schedule_window(text, now):
+    # แปลงคำระบุช่วงเวลาในคำถามเป็นกรอบ [start, end) ตามขอบเขตปฏิทินจริง
+    # (บทเรียน 22 ต.ค.: เดิมไม่มีกิ่ง "เดือนหน้า" คำถามเลยตกไปกรอบ default 14 วัน — นัดปลายเดือนถัดไปหลุดจากคำตอบหมด)
+    if 'เดือนหน้า' in text:
+        first_next = (now.replace(day=1) + timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = (first_next + timedelta(days=32)).replace(day=1)
+        return first_next, end
+    if 'เดือนนี้' in text:
+        end = (now.replace(day=1) + timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return now, end
+    if 'อาทิตย์หน้า' in text or 'สัปดาห์หน้า' in text:
+        start = (now + timedelta(days=7 - now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        return start, start + timedelta(days=7)
+    if 'อาทิตย์นี้' in text or 'สัปดาห์นี้' in text:
+        end = (now + timedelta(days=7 - now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        return now, end
+    return now, now + timedelta(days=14)
+
 def answer_schedule_question(text):
-    events = fetch_upcoming_events(30)
+    tz = pytz.timezone('Asia/Bangkok')
+    now = datetime.now(tz)
+    start, end = schedule_window(text, now)
+    # ดึง event ให้ครอบคลุมกรอบที่ถามจริง (เดือนหน้าอาจไกลถึง ~62 วัน) + เผื่อ maxResults กัน event กิจวัตรรายวันดันรายการจริงหลุด
+    fetch_days = max(30, (end - now).days + 1)
+    events = fetch_upcoming_events(fetch_days, max_results=250)
     # คำถามวันพระตอบด้วยโค้ดล้วน ๆ (แม่นยำ ไม่ต้องใช้ AI)
     if 'วันพระ' in text:
         return answer_wan_phra(text, events)
     if not events:
-        return "ช่วง 30 วันข้างหน้านี้ ยังไม่มีนัดอะไรในปฏิทินครอบครัวเลยครับ"
-    tz = pytz.timezone('Asia/Bangkok')
-    now = datetime.now(tz)
-    # เลือกกรอบเวลาตามคำถาม: อาทิตย์หน้า / อาทิตย์นี้ / เดือนนี้ / ไม่ระบุ = 14 วัน
-    if 'อาทิตย์หน้า' in text or 'สัปดาห์หน้า' in text:
-        start = (now + timedelta(days=7 - now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=7)
-    elif 'เดือนนี้' in text:
-        start, end = now, now + timedelta(days=30)
-    elif 'อาทิตย์นี้' in text or 'สัปดาห์นี้' in text:
-        start = now
-        end = (now + timedelta(days=6 - now.weekday())).replace(hour=23, minute=59, second=59, microsecond=0)
-    else:
-        start, end = now, now + timedelta(days=14)
+        return "ช่วงนี้ยังไม่มีนัดอะไรในปฏิทินครอบครัวเลยครับ"
     sel = [e for e in events if start <= e['start'] < end]
     if not sel:
         return "ช่วงที่ถาม ยังไม่มีนัดในปฏิทินครอบครัวครับ"
@@ -609,6 +649,7 @@ def add_plan_to_calendar(plan):
         if plan.get('participants'):
             desc_parts.append("ผู้เกี่ยวข้อง: " + ", ".join(plan['participants']))
         desc_parts.append("(นัดนี้บอทสรุปจากบทสนทนาในกลุ่ม และมีสมาชิกยืนยันก่อนลงปฏิทิน)")
+        desc_parts.append(remind_marker([60]))
         event = {
             'summary': plan['title'],
             'description': "\n".join(desc_parts),
@@ -837,6 +878,7 @@ def add_flight_events(data):
                 desc.append(f"เลขที่การจอง: {data['booking_ref']}")
             desc.append("⏰ เผื่อเวลาเช็กอินเที่ยวบินในประเทศอย่างน้อย 1.5–2 ชั่วโมง")
             desc.append("(บอทถอดจากรูปแผนเดินทางในกลุ่ม และมีสมาชิกยืนยันก่อนลงปฏิทิน)")
+            desc.append(remind_marker(TRAVEL_REMINDERS))
             event = {
                 'summary': title,
                 'description': "\n".join(desc),
