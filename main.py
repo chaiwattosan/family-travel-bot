@@ -619,6 +619,15 @@ def add_plan_to_calendar(plan):
         if plan.get('location'):
             event['location'] = plan['location']
         result = service.events().insert(calendarId=FAMILY_CALENDAR_ID, body=event).execute()
+        # หมายเหตุจากเคสจริง 22 ต.ค.: override การเตือนบางครั้งไม่ติดตอน insert (อีเวนต์แรกได้ useDefault แทน)
+        # → ย้ำด้วย patch อีกรอบหลังสร้าง เพื่อให้เตือนก่อน 60 นาทีตามที่ประกาศในกลุ่ม
+        try:
+            service.events().patch(
+                calendarId=FAMILY_CALENDAR_ID, eventId=result['id'],
+                body={'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 60}]}},
+            ).execute()
+        except Exception as e:
+            print(f"Reminder patch error: {e}")
         return result.get('htmlLink')
     except Exception as e:
         print(f"Error adding plan to calendar: {e}")
@@ -687,6 +696,238 @@ def handle_plan_flow(event, msg_text):
         return True
     return False
 
+# ===== โหมดสรุปเที่ยวบินจากรูปแผนเดินทาง (เพิ่ม 22 ต.ค. 2569) =====
+# แนวคิดเดียวกับโหมดสรุปนัด: AI ถอดข้อมูล เสนอร่าง คนในกลุ่มยืนยันก่อนลงปฏิทินเสมอ
+# ขั้นตอน: ใครส่งรูปตั๋ว/แผนเดินทางเข้ากลุ่มไว้ก่อน → พิมพ์ทริกเกอร์ "สรุปเที่ยวบิน"
+#         → บอทดึงรูปล่าสุดจาก log (ลิงก์ Cloudinary คอลัมน์ H) → Gemini ถอดเป็น JSON + ตรวจรูปแบบ
+#         → โพสต์ร่างในกลุ่ม → ใครพิมพ์ "โอเค/เพิ่ม" ภายใน 10 นาที ถึงสร้างอีเวนต์เที่ยวบินจริง (ขาละ 1 อีเวนต์)
+TRAVEL_TRIGGERS = ['สรุปเที่ยวบิน', 'สรุปการเดินทาง', 'สรุปแผนเดินทาง', 'สรุปตั๋ว', 'ถอดตั๋ว', 'ลงตารางเที่ยวบิน']
+PENDING_TRAVEL = {'data': None, 'expires': None, 'group_id': None}
+TRAVEL_REMINDERS = [1440, 180]  # เตือนล่วงหน้า 1 วัน + 3 ชั่วโมงก่อนออกเดินทาง
+
+def find_latest_image_urls(limit=3):
+    # หา URL รูปล่าสุดจากแท็บ log (คอลัมน์ H) เรียงจากใหม่สุด — ดูย้อนหลังหลายใบเผื่อรูปล่าสุดไม่ใช่เอกสารเดินทาง
+    try:
+        rows = get_sheet().get_all_values()
+    except Exception as e:
+        print(f"Find latest image error: {e}")
+        return []
+    urls = []
+    for r in reversed(rows):
+        if len(r) >= 8 and isinstance(r[7], str) and r[7].startswith('http'):
+            urls.append(r[7])
+            if len(urls) >= limit:
+                break
+    return urls
+
+def download_image_bytes(url):
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+    except Exception as e:
+        print(f"Download image error: {e}")
+        return None
+
+def validate_itinerary(data):
+    # ตรวจข้อมูลที่ AI ถอดมาก่อนเชื่อ: รูปแบบวันที่/เวลา + ช่วงวันที่สมเหตุสมผล + แปลงปี พ.ศ. ที่หลุดมา
+    try:
+        legs = data.get('legs') or []
+        if not legs or len(legs) > 6:
+            return None
+        tz = pytz.timezone('Asia/Bangkok')
+        today = datetime.now(tz).date()
+        clean_legs = []
+        for leg in legs:
+            d = datetime.strptime(str(leg.get('date', '')), '%Y-%m-%d').date()
+            if d.year > 2400:  # AI ส่งปี พ.ศ. หลุดมา → แปลงเป็น ค.ศ.
+                d = d.replace(year=d.year - 543)
+            datetime.strptime(str(leg.get('depart', '')), '%H:%M')
+            datetime.strptime(str(leg.get('arrive', '')), '%H:%M')
+            if not (leg.get('from_city') and leg.get('to_city')):
+                return None
+            if not (today - timedelta(days=1) <= d <= today + timedelta(days=370)):
+                return None
+            leg = dict(leg)
+            leg['date'] = d.strftime('%Y-%m-%d')
+            clean_legs.append(leg)
+        passengers = [str(p).strip() for p in (data.get('passengers') or []) if str(p).strip()]
+        return {
+            'is_itinerary': True,
+            'booking_ref': data.get('booking_ref') or None,
+            'passengers': passengers[:6],
+            'legs': clean_legs,
+        }
+    except Exception as e:
+        print(f"Itinerary validate error: {e}")
+        return None
+
+def extract_itinerary_from_image(image_bytes):
+    if not gemini_client or not image_bytes:
+        return None
+    prompt = """รูปนี้อาจเป็นเอกสารแผนการเดินทาง (ตั๋วเครื่องบิน/รถไฟ/รถทัวร์ หรือหน้ายืนยันการจองจาก Trip.com, Traveloka, สายการบิน ฯลฯ)
+
+งานของคุณ: ถอดข้อมูลการเดินทางจากรูปให้ครบทุกเที่ยว (legs) เฉพาะที่เห็นในรูปจริง ๆ ห้ามเดาหรือแต่งเพิ่ม
+
+กฎสำคัญ:
+- ถ้ารูปไม่ใช่เอกสารการเดินทางเลย ให้ตอบ {"is_itinerary": false} เท่านั้น
+- วันที่: ตอบเป็นปีคริสต์ศักราชรูปแบบ YYYY-MM-DD เสมอ — ถ้าในรูปเป็นปีพุทธศักราช (เช่น 2569) ให้ลบ 543 ก่อน (2569 → 2026)
+- เวลา: รูปแบบ HH:MM (24 ชั่วโมง)
+- ชื่อผู้โดยสาร: คัดลอกตามที่พิมพ์ในเอกสาร (ตัวพิมพ์ใหญ่ภาษาอังกฤษได้)
+- ถ้าอ่านช่องไหนไม่ออก ให้ใส่ null แทนการเดา
+
+ตอบเป็น JSON อย่างเดียวเท่านั้น รูปแบบ:
+{"is_itinerary": true, "booking_ref": "เลขที่การจอง หรือ null", "passengers": ["ชื่อผู้โดยสาร"], "legs": [{"airline": "ชื่อสายการบิน/ผู้ให้บริการ หรือ null", "flight_no": "หมายเลขเที่ยวบิน/ขบวน หรือ null", "from_city": "เมืองต้นทาง", "from_airport": "สนามบิน/สถานีต้นทาง หรือ null", "to_city": "เมืองปลายทาง", "to_airport": "สนามบิน/สถานีปลายทาง หรือ null", "date": "YYYY-MM-DD", "depart": "HH:MM", "arrive": "HH:MM"}]}"""
+    for attempt in range(3):
+        try:
+            response = gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[prompt, types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")],
+            )
+            raw = response.text.strip()
+            if raw.startswith('```'):
+                raw = raw.strip('`')
+                if raw.lower().startswith('json'):
+                    raw = raw[4:].strip()
+            data = json.loads(raw)
+            if not data.get('is_itinerary'):
+                return {'is_itinerary': False}
+            valid = validate_itinerary(data)
+            if valid:
+                return valid
+            print(f"Itinerary attempt {attempt+1}: ถอดได้แต่ข้อมูลไม่ผ่านการตรวจ ลองใหม่")
+            time.sleep(1)
+        except Exception as e:
+            print(f"Itinerary extract attempt {attempt+1} error: {e}")
+            time.sleep(2)
+    return None
+
+def add_flight_events(data):
+    # สร้างอีเวนต์ปฏิทินขาละ 1 อีเวนต์ คืนจำนวนที่สร้างสำเร็จ
+    try:
+        service = get_calendar_service()
+    except Exception as e:
+        print(f"Flight calendar service error: {e}")
+        return 0
+    tz = pytz.timezone('Asia/Bangkok')
+    overrides = [{'method': 'popup', 'minutes': m} for m in TRAVEL_REMINDERS]
+    created = 0
+    for leg in data['legs']:
+        try:
+            start_dt = tz.localize(datetime.strptime(f"{leg['date']}T{leg['depart']}:00", '%Y-%m-%dT%H:%M:%S'))
+            end_dt = tz.localize(datetime.strptime(f"{leg['date']}T{leg['arrive']}:00", '%Y-%m-%dT%H:%M:%S'))
+            if end_dt <= start_dt:
+                end_dt += timedelta(days=1)  # เที่ยวบินข้ามคืน: เวลาถึงเป็นของวันถัดไป
+            code = (leg.get('flight_no') or '').strip()
+            title = f"✈️ {code + ' ' if code else ''}{leg['from_city']} → {leg['to_city']}"
+            desc = []
+            route = leg['from_city']
+            if leg.get('from_airport'):
+                route += f" ({leg['from_airport']})"
+            route += f" → {leg['to_city']}"
+            if leg.get('to_airport'):
+                route += f" ({leg['to_airport']})"
+            desc.append(f"เส้นทาง: {route}")
+            carrier = ' '.join(x for x in [(leg.get('airline') or '').strip(), code] if x)
+            if carrier:
+                desc.append(f"เที่ยวบิน: {carrier}")
+            if data.get('passengers'):
+                desc.append("ผู้โดยสาร: " + ", ".join(data['passengers']))
+            if data.get('booking_ref'):
+                desc.append(f"เลขที่การจอง: {data['booking_ref']}")
+            desc.append("⏰ เผื่อเวลาเช็กอินเที่ยวบินในประเทศอย่างน้อย 1.5–2 ชั่วโมง")
+            desc.append("(บอทถอดจากรูปแผนเดินทางในกลุ่ม และมีสมาชิกยืนยันก่อนลงปฏิทิน)")
+            event = {
+                'summary': title,
+                'description': "\n".join(desc),
+                'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Asia/Bangkok'},
+                'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Bangkok'},
+                'reminders': {'useDefault': False, 'overrides': overrides},
+            }
+            if leg.get('from_airport'):
+                event['location'] = leg['from_airport']
+            result = service.events().insert(calendarId=FAMILY_CALENDAR_ID, body=event).execute()
+            # ย้ำ reminder ด้วย patch (บทเรียนเดียวกับโหมดสรุปนัด: override ตอน insert บางครั้งไม่ติด)
+            try:
+                service.events().patch(
+                    calendarId=FAMILY_CALENDAR_ID, eventId=result['id'],
+                    body={'reminders': {'useDefault': False, 'overrides': overrides}},
+                ).execute()
+            except Exception as e:
+                print(f"Flight reminder patch error: {e}")
+            created += 1
+        except Exception as e:
+            print(f"Error adding flight event: {e}")
+    return created
+
+def format_travel_draft(data):
+    tz = pytz.timezone('Asia/Bangkok')
+    lines = ["✈️ **บอทถอดแผนเดินทางจากรูปให้แบบนี้ครับ**"]
+    if data.get('passengers'):
+        lines.append("👥 ผู้โดยสาร: " + ", ".join(data['passengers']))
+    if data.get('booking_ref'):
+        lines.append(f"🎫 เลขที่การจอง: {data['booking_ref']}")
+    for i, leg in enumerate(data['legs'], 1):
+        d = tz.localize(datetime.strptime(leg['date'], '%Y-%m-%d'))
+        code = (leg.get('flight_no') or '').strip()
+        lines.append(f"{i}) {code + ' ' if code else ''}{leg['from_city']} → {leg['to_city']}")
+        lines.append(f"🗓 {fmt_thai_date(d)} เวลา {leg['depart']}–{leg['arrive']} น.")
+    lines.append("🔔 เตือนล่วงหน้า 1 วัน และ 3 ชั่วโมงก่อนออกเดินทาง")
+    lines.append('👉 พิมพ์ "โอเค" หรือ "เพิ่ม" ภายใน 10 นาทีเพื่อลงปฏิทิน — พิมพ์ "ยกเลิก" ถ้าไม่เอา')
+    return "\n".join(lines)
+
+def handle_travel_flow(event, msg_text):
+    # คืนค่า True = จัดการข้อความนี้แล้ว (ส่ง reply แล้ว) — แต่ยังให้ไหลไปลง log ตามปกติ (แบบเดียวกับโหมดสรุปนัด)
+    source = event.source
+    group_id = getattr(source, 'group_id', None) or getattr(source, 'room_id', None) or getattr(source, 'user_id', None)
+    tz = pytz.timezone('Asia/Bangkok')
+    now = datetime.now(tz)
+    pending = PENDING_TRAVEL.get('data')
+    if pending and PENDING_TRAVEL.get('expires'):
+        if now > PENDING_TRAVEL['expires']:
+            PENDING_TRAVEL['data'] = None
+            pending = None
+        elif PENDING_TRAVEL.get('group_id') == group_id:
+            if is_reject_word(msg_text):
+                PENDING_TRAVEL['data'] = None
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="รับทราบครับ ไม่ลงแผนเดินทางนี้ลงปฏิทิน"))
+                return True
+            if is_confirm_word(msg_text):
+                created = add_flight_events(pending)
+                PENDING_TRAVEL['data'] = None
+                if created:
+                    first = pending['legs'][0]
+                    d = tz.localize(datetime.strptime(first['date'], '%Y-%m-%d'))
+                    text = (f"📅 **ลงปฏิทินครอบครัวแล้วครับ!**\n"
+                            f"✈️ ทั้งหมด {created} เที่ยวบิน\n"
+                            f"🗓 เที่ยวแรก: {fmt_thai_date(d)} เวลา {first['depart']} น.\n"
+                            f"🔔 บอทจะเตือนในกลุ่มล่วงหน้า 1 วัน และ 3 ชั่วโมงก่อนบินครับ")
+                else:
+                    text = "❌ ลงปฏิทินไม่สำเร็จ ลองพิมพ์ 'สรุปเที่ยวบิน' ให้บอททำร่างใหม่นะครับ"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=text))
+                return True
+            return False  # ข้อความอื่นระหว่างรอร่าง — ปล่อย flow ปกติ ร่างยังรอต่อ
+    if any(t in msg_text for t in TRAVEL_TRIGGERS):
+        found = None
+        for url in find_latest_image_urls(3):
+            image_bytes = download_image_bytes(url)
+            if not image_bytes:
+                continue
+            result = extract_itinerary_from_image(image_bytes)
+            if result and result.get('is_itinerary'):
+                found = result
+                break
+        if not found:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(
+                text="🔍 เราดูรูปล่าสุดในบันทึกแล้ว ยังไม่เจอแผนเดินทางที่ถอดได้ครับ — ส่งรูปตั๋ว/แผนเดินทางเข้ากลุ่มก่อน แล้วพิมพ์ 'สรุปเที่ยวบิน' อีกครั้งนะครับ"))
+            return True
+        PENDING_TRAVEL['data'] = found
+        PENDING_TRAVEL['expires'] = now + timedelta(minutes=10)
+        PENDING_TRAVEL['group_id'] = group_id
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=format_travel_draft(found)))
+        return True
+    return False
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     try:
@@ -727,8 +968,16 @@ def handle_text_message(event):
             except Exception as e:
                 print(f"Plan flow error: {e}")
 
-        # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5 หรือจัดการในข้อ 0.7)
-        cal_intent = None if (qa_answer or plan_handled) else parse_calendar_intent(msg_text)
+        # 0.8 สรุปเที่ยวบินจากรูปแผนเดินทาง: ทริกเกอร์ขอร่างถอดรูป หรือคำยืนยัน/ปฏิเสธร่างที่รออยู่
+        travel_handled = False
+        if not qa_answer and not plan_handled:
+            try:
+                travel_handled = handle_travel_flow(event, msg_text)
+            except Exception as e:
+                print(f"Travel flow error: {e}")
+
+        # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5 หรือจัดการในข้อ 0.7/0.8)
+        cal_intent = None if (qa_answer or plan_handled or travel_handled) else parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
             summary = cal_intent.get("summary", "นัดหมายครอบครัว")
             start_time = cal_intent.get("start_time")
