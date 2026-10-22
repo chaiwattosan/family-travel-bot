@@ -507,6 +507,186 @@ def answer_schedule_question(text):
                 print(f"Schedule Q&A Gemini attempt {attempt+1} error: {e}")
     return "📅 นัดที่จะถึง:\n" + listing
 
+# ===== โหมดสรุปนัดจากบทสนทนา (เพิ่ม 22 ต.ค. 2569) =====
+# แนวคิด: AI เสนอร่าง คนในกลุ่มยืนยันก่อนเสมอ — บอทไม่มีสิทธิ์ลงปฏิทินเองจากบทสนทนา
+# ขั้นตอน: พิมพ์ทริกเกอร์ → บอทอ่าน log บทสนทนาวันนี้ใน Sheets → Gemini สรุปนัดล่าสุดที่ตกลงกันจบ
+#         → โพสต์ร่างในกลุ่ม → ใครพิมพ์ "โอเค/เพิ่ม" ภายใน 10 นาที ถึงลงปฏิทินจริง
+PLAN_TRIGGERS = ['สรุปนัด', 'สรุปบทสนทนา', 'นัดนี้ลงปฏิทิน', 'สรุปแผนให้หน่อย']
+CONFIRM_WORDS = {'โอเค', 'ok', 'okay', 'เพิ่ม', 'ตกลง', 'ยืนยัน', 'ลงเลย', 'เอาเลย', 'ได้เลย'}
+REJECT_WORDS = {'ยกเลิก', 'ไม่เอา', 'ไม่ใช่', 'ไม่ต้อง', 'อย่าเพิ่ง'}
+PENDING_PLAN = {'data': None, 'expires': None, 'group_id': None}
+
+def normalize_short(text):
+    t = text.strip().lower()
+    # ตัดคำลงท้ายออกเพียงชั้นเดียว (กันเคส "ได้เลยครับ" โดนตัดสองชั้นจนเหลือ "ได้")
+    for suf in ['นะครับ', 'นะคะ', 'ครับ', 'ค่ะ', 'นะ', 'เลย', 'จ้า', 'ฮะ']:
+        if t.endswith(suf):
+            t = t[:-len(suf)].strip()
+            break
+    return t.strip('!~. ')
+
+def is_confirm_word(text):
+    n = normalize_short(text)
+    return len(n) <= 10 and n in CONFIRM_WORDS
+
+def is_reject_word(text):
+    n = normalize_short(text)
+    return len(n) <= 10 and n in REJECT_WORDS
+
+def fetch_chat_context(max_rows=80):
+    # อ่านบันทึกบทสนทนาจากแท็บ log (บอทเขียนไว้ทุกข้อความอยู่แล้ว) — ใช้แถวของวันนี้ก่อน
+    try:
+        sheet = get_sheet()
+        rows = sheet.get_all_values()
+    except Exception as e:
+        print(f"Fetch chat context error: {e}")
+        return ""
+    tz = pytz.timezone('Asia/Bangkok')
+    today = datetime.now(tz).strftime('%Y-%m-%d')
+    valid = [r for r in rows if len(r) >= 5 and r[0][:1].isdigit() and r[4].strip()]
+    todays = [r for r in valid if r[0].startswith(today)]
+    chosen = todays[-max_rows:] if len(todays) >= 3 else valid[-max_rows:]
+    return "\n".join(f"[{r[0]}] {r[1]}: {r[4]}" for r in chosen)
+
+def summarize_plan_from_chat(context):
+    if not gemini_client or not context:
+        return None
+    tz = pytz.timezone('Asia/Bangkok')
+    now = datetime.now(tz)
+    prompt = f"""วันนี้คือ {fmt_thai_datetime(now)} (วันที่ {now.strftime('%Y-%m-%d')} เวลา {now.strftime('%H:%M')})
+
+ด้านล่างคือบันทึกบทสนทนาในกลุ่ม LINE ครอบครัว (แต่ละบรรทัด: [เวลา] ชื่อผู้ส่ง: เนื้อความที่ระบบสรุปไว้)
+---
+{context}
+---
+งานของคุณ: หา "แผนหรือนัดล่าสุดที่คนในกลุ่มตกลงกันจบแล้ว" จากบทสนทนานี้ (มีคนเสนอ แล้วมีคนตอบตกลง/โอเค/ได้เลย) — เลือกแผนที่ใหม่ที่สุดเพียงแผนเดียว
+
+กฎ:
+- ถ้าไม่เห็นแผนที่ตกลงกันชัดเจน ให้ตอบ {{"found": false}} เท่านั้น
+- เวลาออกเดินทาง เช่น "ล้อหมุน 10:30" ให้ใช้เป็นเวลาเริ่มของนัด
+- ถ้าไม่ระบุเวลาจบ ให้ end_time เป็น null
+- แปลงวันที่เป็น YYYY-MM-DD โดยอิงวันปัจจุบันด้านบน ("พรุ่งนี้" = วันถัดไป)
+- ห้ามแต่งรายละเอียดที่ไม่มีในบทสนทนา
+
+ตอบเป็น JSON อย่างเดียวเท่านั้น รูปแบบ:
+{{"found": true, "title": "ชื่อนัดสั้น ๆ", "date": "YYYY-MM-DD", "start_time": "HH:MM", "end_time": "HH:MM หรือ null", "location": "สถานที่ หรือ null", "details": "รายละเอียดสั้น ๆ", "participants": ["ชื่อผู้เกี่ยวข้อง"]}}"""
+    for attempt in range(3):
+        try:
+            response = gemini_client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+            raw = response.text.strip()
+            if raw.startswith('```'):
+                raw = raw.strip('`')
+                if raw.lower().startswith('json'):
+                    raw = raw[4:].strip()
+            plan = json.loads(raw)
+            if not plan.get('found'):
+                return None
+            # ตรวจรูปแบบขั้นต่ำก่อนเชื่อ AI
+            datetime.strptime(plan['date'], '%Y-%m-%d')
+            datetime.strptime(plan['start_time'], '%H:%M')
+            if plan.get('end_time'):
+                datetime.strptime(plan['end_time'], '%H:%M')
+            return plan
+        except Exception as e:
+            print(f"Plan summary attempt {attempt+1} error: {e}")
+            time.sleep(2)
+    return None
+
+def add_plan_to_calendar(plan):
+    try:
+        service = get_calendar_service()
+        tz = pytz.timezone('Asia/Bangkok')
+        start_dt = tz.localize(datetime.strptime(f"{plan['date']}T{plan['start_time']}:00", '%Y-%m-%dT%H:%M:%S'))
+        if plan.get('end_time'):
+            end_dt = tz.localize(datetime.strptime(f"{plan['date']}T{plan['end_time']}:00", '%Y-%m-%dT%H:%M:%S'))
+            if end_dt <= start_dt:
+                end_dt = start_dt + timedelta(hours=2)
+        else:
+            end_dt = start_dt + timedelta(hours=2)
+        desc_parts = []
+        if plan.get('details'):
+            desc_parts.append(plan['details'])
+        if plan.get('participants'):
+            desc_parts.append("ผู้เกี่ยวข้อง: " + ", ".join(plan['participants']))
+        desc_parts.append("(นัดนี้บอทสรุปจากบทสนทนาในกลุ่ม และมีสมาชิกยืนยันก่อนลงปฏิทิน)")
+        event = {
+            'summary': plan['title'],
+            'description': "\n".join(desc_parts),
+            'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'Asia/Bangkok'},
+            'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'Asia/Bangkok'},
+            'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 60}]},
+        }
+        if plan.get('location'):
+            event['location'] = plan['location']
+        result = service.events().insert(calendarId=FAMILY_CALENDAR_ID, body=event).execute()
+        return result.get('htmlLink')
+    except Exception as e:
+        print(f"Error adding plan to calendar: {e}")
+        return None
+
+def format_plan_draft(plan):
+    tz = pytz.timezone('Asia/Bangkok')
+    d = datetime.strptime(plan['date'], '%Y-%m-%d')
+    end_txt = f"–{plan['end_time']}" if plan.get('end_time') else ""
+    lines = [
+        "📋 **บอทสรุปนัดจากบทสนทนาให้แบบนี้ครับ**",
+        f"📌 {plan['title']}",
+        f"🗓 {fmt_thai_date(tz.localize(d))} เวลา {plan['start_time']}{end_txt} น.",
+    ]
+    if plan.get('location'):
+        lines.append(f"📍 {plan['location']}")
+    if plan.get('details'):
+        lines.append(f"📝 {plan['details']}")
+    if plan.get('participants'):
+        lines.append("👥 " + ", ".join(plan['participants']))
+    lines.append("🔔 เตือนก่อน 1 ชั่วโมง")
+    lines.append('👉 พิมพ์ "โอเค" หรือ "เพิ่ม" ภายใน 10 นาทีเพื่อลงปฏิทิน — พิมพ์ "ยกเลิก" ถ้าไม่เอา')
+    return "\n".join(lines)
+
+def handle_plan_flow(event, msg_text):
+    # คืนค่า True = จัดการข้อความนี้แล้ว (ส่ง reply แล้ว) — แต่ยังให้ไหลไปลง log ตามปกติ
+    source = event.source
+    group_id = getattr(source, 'group_id', None) or getattr(source, 'room_id', None) or getattr(source, 'user_id', None)
+    tz = pytz.timezone('Asia/Bangkok')
+    now = datetime.now(tz)
+    pending = PENDING_PLAN.get('data')
+    if pending and PENDING_PLAN.get('expires'):
+        if now > PENDING_PLAN['expires']:
+            PENDING_PLAN['data'] = None
+            pending = None
+        elif PENDING_PLAN.get('group_id') == group_id:
+            if is_reject_word(msg_text):
+                PENDING_PLAN['data'] = None
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="รับทราบครับ ไม่ลงนัดนี้ลงปฏิทิน"))
+                return True
+            if is_confirm_word(msg_text):
+                link = add_plan_to_calendar(pending)
+                PENDING_PLAN['data'] = None
+                if link:
+                    d = tz.localize(datetime.strptime(pending['date'], '%Y-%m-%d'))
+                    text = (f"📅 **ลงปฏิทินครอบครัวแล้วครับ!**\n"
+                            f"📌 {pending['title']}\n"
+                            f"🗓 {fmt_thai_date(d)} เวลา {pending['start_time']} น.\n"
+                            f"🔔 บอทจะเตือนในกลุ่มก่อน 1 ชั่วโมงครับ")
+                else:
+                    text = "❌ ลงปฏิทินไม่สำเร็จ ลองพิมพ์ 'สรุปนัด' ให้บอททำร่างใหม่นะครับ"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=text))
+                return True
+            return False  # ข้อความอื่นระหว่างรอร่าง — ปล่อย flow ปกติ ร่างยังรอต่อ
+    if any(t in msg_text for t in PLAN_TRIGGERS):
+        context = fetch_chat_context()
+        plan = summarize_plan_from_chat(context)
+        if not plan:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(
+                text="🔍 เราดูบทสนทนาวันนี้แล้ว ยังไม่เจอนัดที่ตกลงกันจบแล้วครับ ถ้ามีแผน พิมพ์สั่งบอทแบบเดิม (เช่น 'นัดหมาย ...') ได้เลย"))
+            return True
+        PENDING_PLAN['data'] = plan
+        PENDING_PLAN['expires'] = now + timedelta(minutes=10)
+        PENDING_PLAN['group_id'] = group_id
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=format_plan_draft(plan)))
+        return True
+    return False
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     try:
@@ -539,8 +719,16 @@ def handle_text_message(event):
         if qa_answer:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=qa_answer))
 
-        # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5)
-        cal_intent = None if qa_answer else parse_calendar_intent(msg_text)
+        # 0.7 สรุปนัดจากบทสนทนา: ทริกเกอร์ขอร่างสรุป หรือคำยืนยัน/ปฏิเสธร่างที่รออยู่
+        plan_handled = False
+        if not qa_answer:
+            try:
+                plan_handled = handle_plan_flow(event, msg_text)
+            except Exception as e:
+                print(f"Plan flow error: {e}")
+
+        # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5 หรือจัดการในข้อ 0.7)
+        cal_intent = None if (qa_answer or plan_handled) else parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
             summary = cal_intent.get("summary", "นัดหมายครอบครัว")
             start_time = cal_intent.get("start_time")
