@@ -12,7 +12,7 @@ import threading
 from flask import Flask, request, abort
 
 from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
+from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageMessage, StickerMessage
 
 import gspread
@@ -45,6 +45,42 @@ TRAIN_PUSH_ENABLED = os.environ.get('TRAIN_PUSH_ENABLED', '0') == '1'
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+# ===== Bot B — ช่องสำรองสำหรับ push โดยเฉพาะ (เพิ่ม 23 ต.ค. 2026 ตามการตัดสินใจของนาย) =====
+# ที่มา: โควตา push แผนฟรี (200 ข้อความ/เดือน/ช่อง) ของ Bot A หมดกลางเดือน ต.ค. 2026 จาก [Train] push
+# Bot B = อีก Official Account (โควตาแยกอีก 200/เดือน) — หน้าที่เดียวคือ push แทน A เวลา A เจอ 429
+# B ไม่ตอบแชต ไม่มีโฟลว์ของตัวเอง: webhook ของ B (/callback_b) แค่พิมพ์ Source id ลง log
+# ⚠️ userId/groupId ของ LINE เป็น "รายช่อง" — id ของช่อง B ใช้แทนของ A ไม่ได้ ต้องอ่านจาก log [BotB]
+# แล้วตั้ง env แยก: LINE_B_CHANNEL_ACCESS_TOKEN / LINE_B_CHANNEL_SECRET / FAMILY_GROUP_ID_B / ADMIN_USER_ID_B
+# ไม่ตั้ง env ชุดนี้ = ระบบทำงานแบบเดิมด้วย A ช่องเดียว (failover ปิดเองอัตโนมัติ)
+LINE_B_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_B_CHANNEL_ACCESS_TOKEN')
+LINE_B_CHANNEL_SECRET = os.environ.get('LINE_B_CHANNEL_SECRET')
+FAMILY_GROUP_ID_B = os.environ.get('FAMILY_GROUP_ID_B')
+ADMIN_USER_ID_B = os.environ.get('ADMIN_USER_ID_B')
+line_bot_api_b = LineBotApi(LINE_B_CHANNEL_ACCESS_TOKEN) if LINE_B_CHANNEL_ACCESS_TOKEN else None
+handler_b = WebhookHandler(LINE_B_CHANNEL_SECRET) if LINE_B_CHANNEL_SECRET else None
+
+if handler_b:
+    @handler_b.default()
+    def bot_b_log_only(event):
+        # Bot B ไม่ประมวลผลอะไรเลย — แค่โชว์ id ของช่อง B ใน log ไว้ให้แอดมินเอาไปตั้ง env
+        src = event.source
+        print(f"[BotB] event={event.type} user:{getattr(src, 'user_id', None)} group:{getattr(src, 'group_id', None)} room:{getattr(src, 'room_id', None)}")
+
+def push_with_failover(text, target_a, target_b):
+    # ส่ง push ผ่าน Bot A ก่อน — ถ้าเจอโควตาเต็ม (429) สลับไป Bot B ให้อัตโนมัติ
+    # target_b = id ปลายทางเดียวกันในช่อง B (คนละค่ากับของ A เสมอ) — คืนค่า 'A' / 'B' / None (ส่งไม่ได้ทั้งคู่)
+    try:
+        line_bot_api.push_message(target_a, TextSendMessage(text=text))
+        return 'A'
+    except LineBotApiError as e:
+        if getattr(e, 'status_code', None) != 429:
+            raise
+        print("Push via Bot A hit monthly quota (429) — failing over to Bot B")
+    if line_bot_api_b and target_b:
+        line_bot_api_b.push_message(target_b, TextSendMessage(text=text))
+        return 'B'
+    return None
 
 if GEMINI_API_KEY:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -379,9 +415,22 @@ def background_calendar_reminder_worker():
                             f"🕒 เริ่ม: {start_dt.strftime('%d/%m %H:%M น.')} ({lead})"
                         )
 
-                        target_id = FAMILY_GROUP_ID if FAMILY_GROUP_ID else ADMIN_USER_ID
-                        if target_id:
-                            line_bot_api.push_message(target_id, TextSendMessage(text=alert_text))
+                        # ปลายทางแยกตามช่อง (groupId/userId เป็นรายช่อง ใช้แทนกันไม่ได้):
+                        # ส่งด้วย A ก่อน โควตา A เต็ม (429) ค่อยสลับไป B — ดู push_with_failover
+                        if FAMILY_GROUP_ID:
+                            target_a, target_b = FAMILY_GROUP_ID, FAMILY_GROUP_ID_B
+                        else:
+                            target_a, target_b = ADMIN_USER_ID, ADMIN_USER_ID_B
+                        if target_a:
+                            try:
+                                used = push_with_failover(alert_text, target_a, target_b)
+                                if used is None:
+                                    print(f"Reminder push not delivered for {key} (Bot A quota exhausted, Bot B unavailable)")
+                                elif used == 'B':
+                                    print(f"Reminder for {key} sent via Bot B")
+                            except Exception as e:
+                                # push ไม่ผ่านก็ถือว่าพยายามกับ occurrence นี้แล้ว ไม่ retry ซ้ำทุก 60 วิจน log รก
+                                print(f"Reminder push failed for {key}: {e}")
 
                         notified.add(key)
         except Exception as e:
@@ -396,6 +445,20 @@ reminder_thread.start()
 def index():
     # หน้าเช็กสถานะ: เปิด URL หลักในเบราว์เซอร์ หรือให้ UptimeRobot ping จะได้คำตอบ 200 OK
     return "Family Travel & Kitchen Bot is running!", 200
+
+@app.route("/callback_b", methods=['POST'])
+def callback_b():
+    # Webhook ของ Bot B — ไม่ตอบแชต ประมวลผลอะไรทั้งนั้น (handler_b มีแค่ตัวพิมพ์ log [BotB])
+    # ใช้ตอนติดตั้ง B: แอดมิน add เพื่อน/เชิญ B เข้ากลุ่ม แล้วอ่าน userId/groupId ของช่อง B จาก Render log
+    if not handler_b:
+        return 'Bot B not configured', 200
+    signature = request.headers['X-Line-Signature']
+    body = request.get_data(as_text=True)
+    try:
+        handler_b.handle(body, signature)
+    except InvalidSignatureError:
+        abort(400)
+    return 'OK'
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -434,7 +497,21 @@ def is_schedule_question(text):
         return True
     if ('นัด' in t or 'ตาราง' in t) and any(c in t for c in QA_QUESTION_CUES):
         return True
+    # คำขอตารางแบบไม่มีคำถาม cue ก็คือคำถามถึงบอท (เคสจริง 23 ต.ค. 2026: อาหนุ่ยพิมพ์
+    # "ตารางงานพรุ่งนี้หน่อย" — ไม่มี ไหม/เมื่อไหร่/อะไรบ้าง บอทเลยเงียบ ไม่ตอบอะไรเลย)
+    if 'ตาราง' in t and any(d in t for d in ['วันนี้', 'พรุ่งนี้', 'มะรืน', 'สัปดาห์', 'อาทิตย์', 'เดือน']):
+        return True
     return False
+
+def is_image_summary_request(text):
+    # ขอให้สรุป/อ่าน "รูป" — บอทยังสรุปเนื้อหาจากรูปในแชตไม่ได้ (รูปถูกบันทึกเข้าชีตอย่างเดียว)
+    # เคสจริง 23 ต.ค. 2026: "สรุปตารางงานจากรูปที่ส่งนี้ได้ไหม" มีคำว่า ตาราง+ไหม เลยโดน QA ปฏิทิน
+    # แย่งไปตอบจากปฏิทินครอบครัวแทน ทั้งที่คนถามหมายถึงรูปตารางสอบที่เพิ่งส่ง — ต้องกันไว้ก่อนถึง QA
+    # ยกเว้นงานถอดรูปเที่ยวบิน (ขั้น 0.8) ที่มีทริกเกอร์และโฟลว์ของตัวเอง
+    t = text.strip()
+    if any(w in t for w in ['เที่ยวบิน', 'ตั๋ว', 'ไฟลต์']):
+        return False
+    return ('สรุป' in t or 'อ่าน' in t) and any(w in t for w in ['รูป', 'ภาพ'])
 
 def fmt_thai_date(dt):
     return f"{THAI_WEEKDAYS[dt.weekday()]}ที่ {dt.day} {THAI_MONTHS[dt.month]} {dt.year + 543}"
@@ -497,6 +574,18 @@ def answer_wan_phra(text, events):
 def schedule_window(text, now):
     # แปลงคำระบุช่วงเวลาในคำถามเป็นกรอบ [start, end) ตามขอบเขตปฏิทินจริง
     # (บทเรียน 22 ต.ค.: เดิมไม่มีกิ่ง "เดือนหน้า" คำถามเลยตกไปกรอบ default 14 วัน — นัดปลายเดือนถัดไปหลุดจากคำตอบหมด)
+    # กิ่งรายวัน (เพิ่ม 23 ต.ค. 2026 เย็น): เดิมไม่มี วันนี้/พรุ่งนี้ เลย — คำถาม "พรุ่งนี้มีนัดอะไรไหม" ตกไปกรอบ
+    # default 14 วัน แล้ว AI ต้องเดาเองว่ารายการไหนคือ "พรุ่งนี้" → ในกลุ่ม AI หยิบนัดวันจันทร์ที่ 26 มาตอบ
+    # ทั้งที่พรุ่งนี้คือเสาร์ที่ 24 (ส่วน 1-1 ตอบถูกเพราะ AI เดาถูกครั้งนั้น) — วันต้องให้โค้ดกำหนด ไม่ใช่ให้ AI เดา
+    today0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if 'มะรืน' in text:
+        start = today0 + timedelta(days=2)
+        return start, start + timedelta(days=1)
+    if 'พรุ่งนี้' in text:
+        start = today0 + timedelta(days=1)
+        return start, start + timedelta(days=1)
+    if 'วันนี้' in text or 'คืนนี้' in text:
+        return today0, today0 + timedelta(days=1)
     if 'เดือนหน้า' in text:
         first_next = (now.replace(day=1) + timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         end = (first_next + timedelta(days=32)).replace(day=1)
@@ -546,6 +635,12 @@ def answer_schedule_question(text):
             line += f" [กิจวัตรซ้ำ {counts[e['summary']]} ครั้งในช่วงนี้]"
         listing_lines.append(line)
     listing = "\n".join(listing_lines)
+    # ป้ายชื่อช่วงเวลาแบบ deterministic ให้ AI ใช้เรียกวันในคำตอบ — กัน AI เดาวัน/วันที่เอง
+    # (เคส 23 ต.ค. 2026 เย็น: AI เรียกวันจันทร์ที่ 26 ว่า "พรุ่งนี้" ทั้งที่พรุ่งนี้คือเสาร์ที่ 24)
+    if (end - start) == timedelta(days=1):
+        window_label = fmt_thai_date(start)
+    else:
+        window_label = f"{fmt_thai_date(start)} ถึง {fmt_thai_date(end - timedelta(days=1))}"
     # ให้ AI ช่วยเรียบเรียงคำตอบจากรายการที่โค้ดคัดกรองตามช่วงเวลามาแล้ว — ตอบจากรายการนี้เท่านั้น
     # บทเรียนเคสจริง 23 ต.ค. 2026: คำถาม "วันนี้มีนัดหมายอะไรไหม" เคยโดน AI ตีความคำว่า "นัดหมาย" เป็นประเภทนัด
     # แล้วตอบว่าไม่มี ทั้งที่รายการมีนัดอยู่ (ส่วนประโยค "มีนัดอะไรไหม" ตอบถูก) — จึงต้อง (1) สั่งใน prompt ว่า
@@ -559,6 +654,7 @@ def answer_schedule_question(text):
                     config=types.GenerateContentConfig(temperature=0),
                     contents=f"""
 คำถามจากสมาชิกในครอบครัว: "{text}"
+ช่วงเวลาที่คำถามหมายถึง (โค้ดกำหนดให้แล้ว ใช้เรียกวันตามนี้เป๊ะ ๆ ห้ามเดาวันเอง): {window_label}
 
 รายการนัดในปฏิทินครอบครัว (เฉพาะช่วงที่เกี่ยวข้อง):
 {listing}
@@ -1028,7 +1124,10 @@ def handle_text_message(event):
         # 0.5 ถาม-ตอบตารางนัด/วันพระ: ถ้าเป็นคำถามเรื่องตาราง ให้ตอบจากปฏิทินจริงก่อน
         # (ตอบแล้วข้ามโหมดสร้างนัด แต่ยังไหลไปบันทึก log + แจ้งแอดมินตามปกติ)
         qa_answer = None
-        if is_schedule_question(msg_text):
+        if is_image_summary_request(msg_text):
+            # ขอสรุปจากรูป: ตอบตามจริงว่ายังทำไม่ได้ แทนที่จะหลุดไปตอบจากปฏิทิน (เคส 23 ต.ค. 2026)
+            qa_answer = "ขออภัยครับ ตอนนี้บอทยังสรุปเนื้อหาจากรูปในแชตไม่ได้ครับ 📷 รูปถูกบันทึกเข้าชีตให้เรียบร้อยแล้ว ถ้าต้องการให้สรุปเป็นนัดหรือลงปฏิทิน พิมพ์รายละเอียดเป็นข้อความมาได้เลยครับ"
+        elif is_schedule_question(msg_text):
             try:
                 qa_answer = answer_schedule_question(msg_text)
             except Exception as e:
