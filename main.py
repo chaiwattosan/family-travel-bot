@@ -1,4 +1,5 @@
 import os
+# BOT VERSION: 2026-10-30-r3 — รอบ 3 (แจ้งล่วงหน้าไม่มีคำว่าเตือน + เตือนเวลาตายตัว + ถามต่อเนื่องกำหนดการ/ชื่อวัน)
 import re
 import json
 import time
@@ -366,7 +367,8 @@ def parse_add_reminder_minutes(text):
     t = text.strip()
     if any(v in t for v in QA_CREATE_VERBS):
         return None
-    if 'เตือน' not in t or ('เพิ่ม' not in t and 'ล่วงหน้า' not in t):
+    # รับทั้ง "แจ้งเตือน" และ "แจ้งล่วงหน้า" (เคสเทสต์สด 21:03: นายพิมพ์ "เพิ่มแจ้งล่วงหน้า 1 วันให้ด้วย" ไม่มีคำว่า เตือน บอทเลยเงียบ)
+    if ('เตือน' not in t and 'แจ้งล่วงหน้า' not in t) or ('เพิ่ม' not in t and 'ล่วงหน้า' not in t):
         return None
     m = re.search(r'(\d+)\s*วัน', t)
     if m:
@@ -379,10 +381,59 @@ def parse_add_reminder_minutes(text):
         return int(m.group(1))
     return None
 
+def parse_absolute_reminder_clock(text):
+    # เวลาเตือนแบบตายตัว เช่น "แจ้งตอน 8 โมงเช้า" → คืน (ชั่วโมง, นาที) หรือ None (เพิ่ม 30 ต.ค. 2569 รอบ 2)
+    # เคสจริงจากเทสต์สด 20:47: นายขอ "แจ้งเตือนล่วงหน้าขอให้แจ้งตอน 8 โมงเช้าน่ะ" บอทเงียบ เพราะตัวดักเดิม
+    # รู้จักเฉพาะเตือนแบบระยะล่วงหน้า (X วัน/ชั่วโมง/นาที) ไม่รู้จักเวลาตายตัว
+    # รั้วกันชน: ต้องมีคำว่า "เตือน" และ "ตอน" นำหน้าเวลา และต้องไม่ใช่ประโยคสร้างนัด (เวลาเริ่มงานของนัดใหม่
+    # ก็มักตามหลังคำว่า "ตอน" เหมือนกัน เช่น "บันทึกนัด...ตอน 21:00" — ห้ามแย่ง)
+    t = text.strip()
+    if ('เตือน' not in t and 'แจ้ง' not in t) or 'ตอน' not in t:
+        return None
+    if any(v in t for v in QA_CREATE_VERBS):
+        return None
+    seg = t.split('ตอน', 1)[1]
+    m = re.search(r'(\d{1,2})[:.](\d{2})', seg)
+    if m:
+        return int(m.group(1)) % 24, int(m.group(2)) % 60
+    m = re.search(r'บ่าย\s*(\d{1,2})\s*โมง', seg)
+    if m:
+        return 12 + (int(m.group(1)) % 12), 0
+    m = re.search(r'ตี\s*(\d{1,2})', seg)
+    if m:
+        return int(m.group(1)) % 12, 0
+    m = re.search(r'(\d{1,2})\s*ทุ่ม', seg)
+    if m:
+        return (18 + int(m.group(1))) % 24, 0
+    m = re.search(r'(\d{1,2})\s*โมง', seg)
+    if m:
+        return int(m.group(1)) % 12, 0
+    if 'เที่ยงคืน' in seg:
+        return 0, 0
+    if 'เที่ยง' in seg:
+        return 12, 0
+    return None
+
+def absolute_reminder_minutes(start_time_str, hh, mm, now):
+    # แปลงเวลาเตือนตายตัวเป็น "นาทีก่อนเริ่มงาน": ใช้เวลานั้นในวันงานก่อน ถ้าเลยเวลาเริ่มงานไปแล้ว
+    # (เช่น งานเริ่ม 07:00 แต่ขอเตือน 08:00) ให้ถอยไปวันก่อนหน้าแทน คืน None ถ้าเวลาที่ได้ผ่านไปแล้ว
+    try:
+        tz = pytz.timezone('Asia/Bangkok')
+        start_dt = tz.localize(datetime.strptime(start_time_str, '%Y-%m-%dT%H:%M:%S'))
+        cand = start_dt.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if cand >= start_dt:
+            cand -= timedelta(days=1)
+        if cand <= now:
+            return None
+        return int((start_dt - cand).total_seconds() // 60)
+    except Exception:
+        return None
+
 def handle_add_reminder_request(event, msg_text):
     # คืนข้อความตอบกลับ หรือ None ถ้าข้อความนี้ไม่ใช่คำสั่งเพิ่มเวลาเตือน
     minutes = parse_add_reminder_minutes(msg_text)
-    if minutes is None:
+    clock = parse_absolute_reminder_clock(msg_text)
+    if minutes is None and clock is None:
         return None
     scope = qa_scope(event)
     now = datetime.now(pytz.timezone('Asia/Bangkok'))
@@ -390,6 +441,14 @@ def handle_add_reminder_request(event, msg_text):
             or not LAST_EVENT.get('expires') or now > LAST_EVENT['expires']):
         return "ขอโทษครับ ไม่แน่ใจว่าหมายถึงนัดไหนครับ รบกวนสร้างนัดใหม่พร้อมบอกเวลาเตือนในประโยคเดียวได้เลยครับ เช่น \"เตือนล่วงหน้า 1 วัน\""
     try:
+        abs_note = None
+        if clock is not None:
+            # ระบุเวลาตายตัวมาชัด ๆ ให้ความสำคัญกว่าแบบระยะล่วงหน้า (เช่น "เตือนล่วงหน้า ขอแจ้งตอน 8 โมงเช้า")
+            abs_minutes = absolute_reminder_minutes(LAST_EVENT.get('start_time'), clock[0], clock[1], now)
+            if abs_minutes is None:
+                return "ขอโทษครับ เวลาเตือนที่ขอคำนวณแล้วผ่านไปแล้วหรือไม่ทันเวลาเริ่มงานครับ ลองบอกเป็นเตือนล่วงหน้าแบบชั่วโมง/วันแทนนะครับ"
+            minutes = abs_minutes
+            abs_note = f"{clock[0]:02d}:{clock[1]:02d}"
         service = get_calendar_service()
         ev = service.events().get(calendarId=FAMILY_CALENDAR_ID, eventId=LAST_EVENT['event_id']).execute()
         desc = ev.get('description', '') or ''
@@ -418,7 +477,10 @@ def handle_add_reminder_request(event, msg_text):
             return f"{m} นาที"
 
         lead_text = ", ".join(fmt_lead(m) for m in new_list)
-        return f"🔔 เพิ่มแจ้งเตือนให้แล้วครับ\n📌 หัวข้อ: {LAST_EVENT.get('summary', 'นัดหมาย')}\n🔔 แจ้งเตือนล่วงหน้า: {lead_text}"
+        reply = f"🔔 เพิ่มแจ้งเตือนให้แล้วครับ\n📌 หัวข้อ: {LAST_EVENT.get('summary', 'นัดหมาย')}\n🔔 แจ้งเตือนล่วงหน้า: {lead_text}"
+        if abs_note:
+            reply += f"\n⏰ เวลาเตือนที่เพิ่ม: {abs_note} น."
+        return reply
     except Exception as e:
         print(f"Add reminder error: {e}")
         return "❌ เพิ่มแจ้งเตือนไม่สำเร็จครับ ลองใหม่อีกครั้งนะครับ"
@@ -655,6 +717,19 @@ def parse_named_month(text, today):
             return (today.year + (1 if num < today.month else 0), num)
     return None
 
+# ชื่อวันในสัปดาห์ — ใช้แปลงคำถาม/คำถามต่อเนื่องที่ระบุวันด้วยชื่อ (เพิ่ม 30 ต.ค. 2569 รอบ 2)
+# เคสจริงจากเทสต์สด 20:48: ถาม "กำหนดการพรุ่งนี้มีอะไรบ้าง" ตอบได้ แต่ถามต่อ "แล้ววันอาทิตย์หล่ะ" บอทเงียบ
+# เพราะโค้ดไม่รู้จักชื่อวันเลย กฎ: วันชื่อนั้นคือวันที่จะถึงถัดไปของวันนั้น (รวมวันนี้ถ้าตรงวัน)
+THAI_WEEKDAY_TO_NUM = {'วันอาทิตย์': 6, 'วันจันทร์': 0, 'วันอังคาร': 1, 'วันพุธ': 2, 'วันพฤหัสบดี': 3, 'วันศุกร์': 4, 'วันเสาร์': 5}
+
+def parse_weekday_date(text, now):
+    # คืน datetime 00:00 ของวันที่ตรงกับชื่อวันในข้อความ หรือ None ถ้าไม่มีชื่อวัน (ห้ามเดา)
+    for name in sorted(THAI_WEEKDAY_TO_NUM, key=len, reverse=True):
+        if name in text:
+            delta = (THAI_WEEKDAY_TO_NUM[name] - now.weekday()) % 7
+            return (now + timedelta(days=delta)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return None
+
 def answer_wan_phra(text, events):
     tz = pytz.timezone('Asia/Bangkok')
     today = datetime.now(tz).date()
@@ -724,6 +799,9 @@ def schedule_window(text, now):
         mend = (mstart + timedelta(days=32)).replace(day=1)
         # เดือนปัจจุบันเริ่มจากตอนนี้ ไม่ย้อนอดีต (แบบเดียวกับกิ่งเดือนนี้)
         return (now if (yy, mm) == (now.year, now.month) else mstart), mend
+    wd = parse_weekday_date(text, now)
+    if wd:
+        return wd, wd + timedelta(days=1)
     if 'อาทิตย์หน้า' in text or 'สัปดาห์หน้า' in text:
         start = (now + timedelta(days=7 - now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
         return start, start + timedelta(days=7)
@@ -833,16 +911,26 @@ def qa_followup_question(text, scope):
         return None
     if not LAST_QA.get('expires') or now > LAST_QA['expires']:
         return None
-    if LAST_QA['topic'] != 'wan_phra':
-        return None
     t = text.strip()
-    if len(t) > 40 or 'เดือน' not in t:
+    if len(t) > 40:
         return None
     if any(v in t for v in QA_CREATE_VERBS) or is_image_summary_request(t):
         return None
-    if not (parse_named_month(t, now) or 'เดือนหน้า' in t or 'เดือนนี้' in t):
-        return None
-    return 'วันพระ' + t
+    if LAST_QA['topic'] == 'wan_phra':
+        if 'เดือน' not in t:
+            return None
+        if not (parse_named_month(t, now) or 'เดือนหน้า' in t or 'เดือนนี้' in t):
+            return None
+        return 'วันพระ' + t
+    if LAST_QA['topic'] == 'schedule':
+        # ถามต่อเนื่องเรื่องกำหนดการ (เพิ่มรอบ 2 จากเคส "แล้ววันอาทิตย์หล่ะ"): ประโยคสั้นที่อ้างถึงวัน
+        # (ชื่อวัน/วันนี้/พรุ่งนี้/มะรืน) หรือเดือน ให้ผูกเข้ากรอบกำหนดการเดิม — วันให้โค้ดคำนวณเหมือนเดิม
+        has_ref = (parse_weekday_date(t, now) is not None
+                   or any(w in t for w in ['วันนี้', 'พรุ่งนี้', 'มะรืน'])
+                   or (('เดือน' in t) and (parse_named_month(t, now) or 'เดือนหน้า' in t or 'เดือนนี้' in t)))
+        if has_ref:
+            return 'กำหนดการ' + t
+    return None
 
 # ===== โหมดสรุปนัดจากบทสนทนา (เพิ่ม 22 ต.ค. 2569) =====
 # แนวคิด: AI เสนอร่าง คนในกลุ่มยืนยันก่อนเสมอ — บอทไม่มีสิทธิ์ลงปฏิทินเองจากบทสนทนา
