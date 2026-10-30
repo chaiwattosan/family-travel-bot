@@ -243,6 +243,9 @@ def notify_admin(sender_name, category, summary_text, thai_time, extra_url=None)
     except Exception as e:
         print(f"Error sending admin log: {e}")
 
+# นัดล่าสุดที่บอทเพิ่งสร้างผ่านโหมดสร้างนัด — ใช้กับคำสั่งต่อเนื่อง "เพิ่มแจ้งเตือนล่วงหน้า..." (เพิ่ม 30 ต.ค. 2569)
+LAST_EVENT = {'event_id': None, 'summary': None, 'start_time': None, 'reminders': [], 'scope': None, 'expires': None}
+
 def parse_calendar_intent(text):
     if not gemini_client:
         return None
@@ -326,6 +329,13 @@ def add_to_calendar(summary, start_time_str, reminder_minutes_list=None, recurre
             event['recurrence'] = [rrule]
 
         event_result = service.events().insert(calendarId=FAMILY_CALENDAR_ID, body=event).execute()
+        # จำนัดล่าสุดไว้ให้คำสั่งต่อเนื่อง "เพิ่มแจ้งเตือน..." (scope จะถูกผูกโดยผู้เรียกใน handle_text_message)
+        LAST_EVENT['event_id'] = event_result.get('id')
+        LAST_EVENT['summary'] = summary
+        LAST_EVENT['start_time'] = start_time_str
+        LAST_EVENT['reminders'] = [int(m) for m in reminder_minutes_list[:5]]
+        LAST_EVENT['scope'] = None
+        LAST_EVENT['expires'] = datetime.now(pytz.timezone('Asia/Bangkok')) + timedelta(minutes=15)
         return event_result.get('htmlLink')
     except Exception as e:
         print(f"Error adding to calendar: {e}")
@@ -348,6 +358,70 @@ def parse_remind_marker(description):
         return vals[:5] or None
     except Exception:
         return None
+
+def parse_add_reminder_minutes(text):
+    # คำสั่งต่อเนื่อง "เพิ่มแจ้งเตือนล่วงหน้า 1 วัน" — คืนจำนวนนาที หรือ None ถ้าไม่ใช่คำสั่งนี้ (เพิ่ม 30 ต.ค. 2569)
+    # เคสจริง 30 ต.ค.: นายพิมพ์สั่งหลังบอทเพิ่งลงนัดอากง แต่บอทเงียบ เพราะข้อความนี้ไม่ใช่ทั้งคำถามตาราง
+    # และไม่ใช่นัดใหม่ (ไม่มีวัน/เวลาเริ่มของตัวเอง) — ต้องมีตัวดักเฉพาะก่อนถึงโหมดสร้างนัด
+    t = text.strip()
+    if any(v in t for v in QA_CREATE_VERBS):
+        return None
+    if 'เตือน' not in t or ('เพิ่ม' not in t and 'ล่วงหน้า' not in t):
+        return None
+    m = re.search(r'(\d+)\s*วัน', t)
+    if m:
+        return int(m.group(1)) * 1440
+    m = re.search(r'(\d+)\s*ชั่วโมง', t)
+    if m:
+        return int(m.group(1)) * 60
+    m = re.search(r'(\d+)\s*นาที', t)
+    if m:
+        return int(m.group(1))
+    return None
+
+def handle_add_reminder_request(event, msg_text):
+    # คืนข้อความตอบกลับ หรือ None ถ้าข้อความนี้ไม่ใช่คำสั่งเพิ่มเวลาเตือน
+    minutes = parse_add_reminder_minutes(msg_text)
+    if minutes is None:
+        return None
+    scope = qa_scope(event)
+    now = datetime.now(pytz.timezone('Asia/Bangkok'))
+    if (not LAST_EVENT.get('event_id') or LAST_EVENT.get('scope') != scope
+            or not LAST_EVENT.get('expires') or now > LAST_EVENT['expires']):
+        return "ขอโทษครับ ไม่แน่ใจว่าหมายถึงนัดไหนครับ รบกวนสร้างนัดใหม่พร้อมบอกเวลาเตือนในประโยคเดียวได้เลยครับ เช่น \"เตือนล่วงหน้า 1 วัน\""
+    try:
+        service = get_calendar_service()
+        ev = service.events().get(calendarId=FAMILY_CALENDAR_ID, eventId=LAST_EVENT['event_id']).execute()
+        desc = ev.get('description', '') or ''
+        old = parse_remind_marker(desc) or LAST_EVENT.get('reminders') or [30]
+        new_list = sorted(set(old + [minutes]), reverse=True)[:5]
+        marker = remind_marker(new_list)
+        if '[remind:' in desc:
+            new_desc = re.sub(r'\[remind:[0-9,]+\]', marker, desc)
+        else:
+            new_desc = (desc + '\n' + marker).strip()
+        overrides = [{'method': 'popup', 'minutes': int(m)} for m in new_list]
+        # ตามกฎเหล็กของบ้านนี้: ตัวเลขเตือนจริงให้ยึด [remind:...] ใน description เป็นหลัก
+        # (overrides ตอน patch ของ service account เคยไม่ติด) จึง patch ทั้งสองอย่างพร้อมกัน
+        service.events().patch(
+            calendarId=FAMILY_CALENDAR_ID,
+            eventId=LAST_EVENT['event_id'],
+            body={'description': new_desc, 'reminders': {'useDefault': False, 'overrides': overrides}},
+        ).execute()
+        LAST_EVENT['reminders'] = new_list
+
+        def fmt_lead(m):
+            if m >= 1440 and m % 1440 == 0:
+                return f"{m // 1440} วัน"
+            if m >= 60 and m % 60 == 0:
+                return f"{m // 60} ชั่วโมง"
+            return f"{m} นาที"
+
+        lead_text = ", ".join(fmt_lead(m) for m in new_list)
+        return f"🔔 เพิ่มแจ้งเตือนให้แล้วครับ\n📌 หัวข้อ: {LAST_EVENT.get('summary', 'นัดหมาย')}\n🔔 แจ้งเตือนล่วงหน้า: {lead_text}"
+    except Exception as e:
+        print(f"Add reminder error: {e}")
+        return "❌ เพิ่มแจ้งเตือนไม่สำเร็จครับ ลองใหม่อีกครั้งนะครับ"
 
 def reminder_due(fire_time, now, grace_minutes=5):
     # ถึงเวลาเตือนหรือยัง: ยิงได้ตั้งแต่ fire_time ถึง fire_time + grace (เผื่อรอบเช็กคลาด/process เพิ่งตื่น)
@@ -495,11 +569,11 @@ def is_schedule_question(text):
         return False
     if 'วันพระ' in t and any(c in t for c in QA_QUESTION_CUES + ['ถัดไป', 'ครั้งหน้า', 'รอบหน้า']):
         return True
-    if ('นัด' in t or 'ตาราง' in t) and any(c in t for c in QA_QUESTION_CUES):
+    if ('นัด' in t or 'ตาราง' in t or 'กำหนดการ' in t or 'แผน' in t) and any(c in t for c in QA_QUESTION_CUES):
         return True
     # คำขอตารางแบบไม่มีคำถาม cue ก็คือคำถามถึงบอท (เคสจริง 23 ต.ค. 2026: อาหนุ่ยพิมพ์
     # "ตารางงานพรุ่งนี้หน่อย" — ไม่มี ไหม/เมื่อไหร่/อะไรบ้าง บอทเลยเงียบ ไม่ตอบอะไรเลย)
-    if 'ตาราง' in t and any(d in t for d in ['วันนี้', 'พรุ่งนี้', 'มะรืน', 'สัปดาห์', 'อาทิตย์', 'เดือน']):
+    if ('ตาราง' in t or 'กำหนดการ' in t) and any(d in t for d in ['วันนี้', 'พรุ่งนี้', 'มะรืน', 'สัปดาห์', 'อาทิตย์', 'เดือน']):
         return True
     return False
 
@@ -543,12 +617,62 @@ def fetch_upcoming_events(days=30, max_results=100):
         })
     return out
 
+# ชื่อเดือนแบบเต็ม + ตัวย่อ — ใช้แปลงคำถามที่ระบุเดือนด้วยชื่อ (เพิ่ม 30 ต.ค. 2569)
+# เคสจริง 30 ต.ค.: ถาม "วันพระเดือน พย มีวันไหนบ้าง" แต่โค้ดเดิมรู้จักแค่ เดือนนี้/เดือนหน้า
+# เลยตกไปตอบแค่วันพระถัดไปวันเดียว ทั้งที่คำถามขอทั้งเดือน
+THAI_MONTH_FULL = {
+    'มกราคม': 1, 'กุมภาพันธ์': 2, 'มีนาคม': 3, 'เมษายน': 4, 'พฤษภาคม': 5, 'มิถุนายน': 6,
+    'กรกฎาคม': 7, 'สิงหาคม': 8, 'กันยายน': 9, 'ตุลาคม': 10, 'พฤศจิกายน': 11, 'ธันวาคม': 12,
+}
+THAI_MONTH_DOTTED = {
+    'ม.ค.': 1, 'ก.พ.': 2, 'มี.ค.': 3, 'เม.ย.': 4, 'พ.ค.': 5, 'มิ.ย.': 6,
+    'ก.ค.': 7, 'ส.ค.': 8, 'ก.ย.': 9, 'ต.ค.': 10, 'พ.ย.': 11, 'ธ.ค.': 12,
+}
+THAI_MONTH_BARE = {
+    'มค': 1, 'กพ': 2, 'มีค': 3, 'เมย': 4, 'พค': 5, 'มิย': 6,
+    'กค': 7, 'สค': 8, 'กย': 9, 'ตค': 10, 'พย': 11, 'ธค': 12,
+}
+
+def parse_named_month(text, today):
+    # หาเดือนที่ผู้ใช้ระบุด้วยชื่อในข้อความ → คืน (ปี ค.ศ., เดือน) หรือ None ถ้าไม่เจอชื่อเดือนชัด ๆ (ห้ามเดา)
+    # ปี: ถ้าเดือนที่ระบุผ่านไปแล้วในปีนี้ ให้หมายถึงปีหน้า (เช่น ธ.ค. ถามถึง ม.ค.)
+    m = re.search(r'เดือน\s*(\d{1,2})(?!\d)', text)
+    if m:
+        num = int(m.group(1))
+        if 1 <= num <= 12:
+            return (today.year + (1 if num < today.month else 0), num)
+    for name in sorted(THAI_MONTH_FULL, key=len, reverse=True):
+        if name in text:
+            num = THAI_MONTH_FULL[name]
+            return (today.year + (1 if num < today.month else 0), num)
+    for name, num in THAI_MONTH_DOTTED.items():
+        if name in text:
+            return (today.year + (1 if num < today.month else 0), num)
+    # ตัวย่อแบบไม่มีจุด (พย, ตค, ...) เสี่ยงชนคำอื่น เช่น พย ใน "พยายาม" — รับเฉพาะเมื่อตามหลังคำว่า "เดือน" มาติด ๆ
+    # และตัวอักษรถัดไปต้องไม่ใช่ตัวอักษรไทย (กันชนคำที่ยาวกว่า)
+    for name, num in THAI_MONTH_BARE.items():
+        if re.search(r'เดือน\s*' + re.escape(name) + r'(?![\u0E00-\u0E7F])', text):
+            return (today.year + (1 if num < today.month else 0), num)
+    return None
+
 def answer_wan_phra(text, events):
     tz = pytz.timezone('Asia/Bangkok')
     today = datetime.now(tz).date()
     wp = [e for e in events if 'วันพระ' in e['summary']]
     if not wp:
         return "ยังไม่มีข้อมูลวันพระในปฏิทินครอบครัวครับ"
+    named = parse_named_month(text, today)
+    if named:
+        yy, mm = named
+        rest = [e for e in wp if e['start'].year == yy and e['start'].month == mm]
+        label = f"เดือน{THAI_MONTHS[mm]} {yy + 543}"
+        if not rest:
+            return f"{label} ไม่มีวันพระในปฏิทินครอบครัวครับ"
+        header = f"🙏 วันพระที่เหลือใน{label}:" if (yy, mm) == (today.year, today.month) else f"🙏 วันพระใน{label}:"
+        lines = [header]
+        for e in rest:
+            lines.append(f"• {fmt_thai_date(e['start'])} — {e['summary']}")
+        return "\n".join(lines)
     if 'เดือนหน้า' in text:
         first_next = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
         rest = [e for e in wp if e['start'].year == first_next.year and e['start'].month == first_next.month]
@@ -593,6 +717,13 @@ def schedule_window(text, now):
     if 'เดือนนี้' in text:
         end = (now.replace(day=1) + timedelta(days=32)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         return now, end
+    named = parse_named_month(text, now)
+    if named:
+        yy, mm = named
+        mstart = now.replace(year=yy, month=mm, day=1, hour=0, minute=0, second=0, microsecond=0)
+        mend = (mstart + timedelta(days=32)).replace(day=1)
+        # เดือนปัจจุบันเริ่มจากตอนนี้ ไม่ย้อนอดีต (แบบเดียวกับกิ่งเดือนนี้)
+        return (now if (yy, mm) == (now.year, now.month) else mstart), mend
     if 'อาทิตย์หน้า' in text or 'สัปดาห์หน้า' in text:
         start = (now + timedelta(days=7 - now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
         return start, start + timedelta(days=7)
@@ -676,6 +807,42 @@ def answer_schedule_question(text):
             except Exception as e:
                 print(f"Schedule Q&A Gemini attempt {attempt+1} error: {e}")
     return "📅 นัดที่จะถึง:\n" + listing
+
+# ===== บริบทถาม-ตอบต่อเนื่อง (เพิ่ม 30 ต.ค. 2569) =====
+# เคสจริง 30 ต.ค.: อาหนุ่ยถาม "เดือนนี้มีวันพระอีกวันไหน" บอทตอบได้ แต่ถามต่อสั้น ๆ ว่า "เดือนพย ละ"
+# บอทเงียบ เพราะประโยคต่อเนื่องไม่มีคำว่า วันพระ/นัด/ตาราง ให้ผ่านประตู QA และบอทไม่มีบริบทค้างอยู่เลย
+# วิธีแก้แบบจำกัดขอบเขต: จำหัวข้อ QA ล่าสุดไว้ 5 นาที แยกตามกลุ่ม/ผู้ใช้ ถ้าข้อความถัดไปเป็นประโยคสั้น ๆ
+# ที่พูดถึง "เดือน" (ชื่อเดือน/เดือนหน้า/เดือนนี้) ให้ถือว่าถามต่อเรื่องเดิม — รอบนี้รองรับเฉพาะหัวข้อวันพระ
+# ซึ่งเป็นเคสจริงที่เจอ ส่วนหัวข้อตารางทั่วไปยังต้องถามแบบเต็มประโยคเหมือนเดิม (กันบอทเดาบริบทผิดเรื่อง)
+LAST_QA = {'topic': None, 'scope': None, 'expires': None}
+QA_FOLLOWUP_MINUTES = 5
+
+def qa_scope(event):
+    gid = getattr(event.source, 'group_id', None)
+    return gid if gid else f"user:{event.source.user_id}"
+
+def remember_qa(topic, scope):
+    LAST_QA['topic'] = topic
+    LAST_QA['scope'] = scope
+    LAST_QA['expires'] = datetime.now(pytz.timezone('Asia/Bangkok')) + timedelta(minutes=QA_FOLLOWUP_MINUTES)
+
+def qa_followup_question(text, scope):
+    # ถ้าข้อความเป็นคำถามต่อเนื่องเรื่องวันพระ ให้ประกอบคำถามเต็มคืนมา ไม่ใช่ให้คืน None
+    now = datetime.now(pytz.timezone('Asia/Bangkok'))
+    if not LAST_QA.get('topic') or LAST_QA.get('scope') != scope:
+        return None
+    if not LAST_QA.get('expires') or now > LAST_QA['expires']:
+        return None
+    if LAST_QA['topic'] != 'wan_phra':
+        return None
+    t = text.strip()
+    if len(t) > 40 or 'เดือน' not in t:
+        return None
+    if any(v in t for v in QA_CREATE_VERBS) or is_image_summary_request(t):
+        return None
+    if not (parse_named_month(t, now) or 'เดือนหน้า' in t or 'เดือนนี้' in t):
+        return None
+    return 'วันพระ' + t
 
 # ===== โหมดสรุปนัดจากบทสนทนา (เพิ่ม 22 ต.ค. 2569) =====
 # แนวคิด: AI เสนอร่าง คนในกลุ่มยืนยันก่อนเสมอ — บอทไม่มีสิทธิ์ลงปฏิทินเองจากบทสนทนา
@@ -1124,6 +1291,7 @@ def handle_text_message(event):
         # 0.5 ถาม-ตอบตารางนัด/วันพระ: ถ้าเป็นคำถามเรื่องตาราง ให้ตอบจากปฏิทินจริงก่อน
         # (ตอบแล้วข้ามโหมดสร้างนัด แต่ยังไหลไปบันทึก log + แจ้งแอดมินตามปกติ)
         qa_answer = None
+        follow_q = None
         if is_image_summary_request(msg_text):
             # ขอสรุปจากรูป: ตอบตามจริงว่ายังทำไม่ได้ แทนที่จะหลุดไปตอบจากปฏิทิน (เคส 23 ต.ค. 2026)
             qa_answer = "ขออภัยครับ ตอนนี้บอทยังสรุปเนื้อหาจากรูปในแชตไม่ได้ครับ 📷 รูปถูกบันทึกเข้าชีตให้เรียบร้อยแล้ว ถ้าต้องการให้สรุปเป็นนัดหรือลงปฏิทิน พิมพ์รายละเอียดเป็นข้อความมาได้เลยครับ"
@@ -1132,8 +1300,17 @@ def handle_text_message(event):
                 qa_answer = answer_schedule_question(msg_text)
             except Exception as e:
                 print(f"Schedule Q&A error: {e}")
+        if not qa_answer:
+            # คำถามต่อเนื่องสั้น ๆ (เช่น "เดือนพย ละ" หลังเพิ่งถามเรื่องวันพระ) — ผูกกับหัวข้อ QA ล่าสุด
+            follow_q = qa_followup_question(msg_text, qa_scope(event))
+            if follow_q:
+                try:
+                    qa_answer = answer_schedule_question(follow_q)
+                except Exception as e:
+                    print(f"Schedule Q&A follow-up error: {e}")
         if qa_answer:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=qa_answer))
+            remember_qa('wan_phra' if 'วันพระ' in (follow_q or msg_text) else 'schedule', qa_scope(event))
 
         # 0.7 สรุปนัดจากบทสนทนา: ทริกเกอร์ขอร่างสรุป หรือคำยืนยัน/ปฏิเสธร่างที่รออยู่
         plan_handled = False
@@ -1151,6 +1328,17 @@ def handle_text_message(event):
             except Exception as e:
                 print(f"Travel flow error: {e}")
 
+        # 0.9 คำสั่งต่อเนื่อง "เพิ่มแจ้งเตือนล่วงหน้า..." สำหรับนัดล่าสุดที่เพิ่งสร้าง (เพิ่ม 30 ต.ค. 2569)
+        if not qa_answer and not plan_handled and not travel_handled:
+            try:
+                reminder_reply = handle_add_reminder_request(event, msg_text)
+            except Exception as e:
+                print(f"Add reminder flow error: {e}")
+                reminder_reply = None
+            if reminder_reply:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reminder_reply))
+                return
+
         # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5 หรือจัดการในข้อ 0.7/0.8)
         cal_intent = None if (qa_answer or plan_handled or travel_handled) else parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
@@ -1165,6 +1353,7 @@ def handle_text_message(event):
             if start_time:
                 res = add_to_calendar(summary, start_time, reminder_list, recurrence, recurrence_days)
                 if res:
+                    LAST_EVENT['scope'] = qa_scope(event)
                     def fmt_lead(m):
                         if m >= 1440 and m % 1440 == 0:
                             return f"{m // 1440} วัน"
