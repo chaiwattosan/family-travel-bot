@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-10-30-r3 — รอบ 3 (แจ้งล่วงหน้าไม่มีคำว่าเตือน + เตือนเวลาตายตัว + ถามต่อเนื่องกำหนดการ/ชื่อวัน)
+# BOT VERSION: 2026-10-31-r4 — รอบ 4 (alias ชื่อคนในครอบครัว + แนบข้อมูลติดต่อลงนัดล่าสุด)
 import re
 import json
 import time
@@ -247,6 +247,27 @@ def notify_admin(sender_name, category, summary_text, thai_time, extra_url=None)
 # นัดล่าสุดที่บอทเพิ่งสร้างผ่านโหมดสร้างนัด — ใช้กับคำสั่งต่อเนื่อง "เพิ่มแจ้งเตือนล่วงหน้า..." (เพิ่ม 30 ต.ค. 2569)
 LAST_EVENT = {'event_id': None, 'summary': None, 'start_time': None, 'reminders': [], 'scope': None, 'expires': None}
 
+# ===== alias ชื่อคนในครอบครัว (เพิ่ม 31 ต.ค. 2569 ข้อ 1) =====
+# เคสจริง 30 ต.ค.: ใบนัด รพ. ของอากงใช้ชื่อจริง "เทียนชัย ตั้งทอง" แต่คนในกลุ่มเรียก อากง / พ่อ / เชฟเทียน
+# ถ้าไม่สอนบอท ชื่อเหล่านี้จะถูกมองเป็นคนละคน ทั้งตอนสร้างนัด (summary คนละชื่อ) และตอนถาม-ตอบตาราง
+# วิธีใช้: ตารางนี้ป้อนเข้า prompt ของ AI ทุกจุดที่ตีความชื่อคน (สร้างนัด / ถาม-ตอบ / สรุปนัดจากบทสนทนา)
+# ให้ AI ใช้ชื่อ canonical เขียน summary เสมอ — ไม่ใช้ substring match ในโค้ด deterministic เพราะชื่อเล่นสั้น ๆ
+# เช่น "นุก" ชนกับคำว่า "สนุก" ได้ (เคสจริง: อากงพิมพ์ "สนุกดี" ในกลุ่ม) บริบทเป็นงานของ AI ไม่ใช่ของ regex
+FAMILY_ALIASES = [
+    ('อากง', ['อากง', 'พ่อ', 'เชฟเทียน', 'เทียนชัย ตั้งทอง', 'เทียนชัย']),
+    ('อาหนุ่ย', ['อาหนุ่ย', 'หนุ่ย']),
+    ('อานุก', ['อานุก', 'ช่างนุก']),
+]
+ALIAS_NOTE_FOR_AI = (
+    "หมายเหตุชื่อคนในครอบครัว (ชื่อในกลุ่มเดียวกันคือคนเดียวกัน ห้ามมองเป็นคนละคน): "
+    "อากง = พ่อ = เชฟเทียน = เทียนชัย = เทียนชัย ตั้งทอง; "
+    "อาหนุ่ย = หนุ่ย; อานุก = ช่างนุก = นุก"
+)
+ALIAS_RULE_FOR_AI = (
+    ALIAS_NOTE_FOR_AI
+    + " — ถ้าข้อความเอ่ยถึงคนเหล่านี้ด้วยชื่อใดก็ตาม ให้ใช้ชื่อแรกของกลุ่ม (อากง / อาหนุ่ย / อานุก) ใน summary เสมอ"
+)
+
 def parse_calendar_intent(text):
     if not gemini_client:
         return None
@@ -271,6 +292,8 @@ def parse_calendar_intent(text):
 - ไม่ระบุเวลาเตือนเลย ให้ใช้ [30]
 - ระบุครั้งเดียว เช่น "เตือนก่อน 15 นาที" = [15], "เตือนก่อน 1 ชั่วโมง" = [60], "เตือนล่วงหน้า 1 วัน" = [1440]
 - ระบุหลายครั้ง เช่น "เตือนล่วงหน้า 1 วัน และก่อน 30 นาที" ให้ใช้ [1440, 30] (สูงสุด 5 ค่า เรียงจากมากไปน้อย)
+
+กติกาเรื่องชื่อคนในครอบครัว: {ALIAS_RULE_FOR_AI}
 
 กติกาเรื่องการทำซ้ำ (recurrence):
 - ไม่ทำซ้ำ ให้ใช้ null
@@ -484,6 +507,68 @@ def handle_add_reminder_request(event, msg_text):
     except Exception as e:
         print(f"Add reminder error: {e}")
         return "❌ เพิ่มแจ้งเตือนไม่สำเร็จครับ ลองใหม่อีกครั้งนะครับ"
+
+# ===== แนบข้อมูลติดต่อลงนัดล่าสุด (เพิ่ม 31 ต.ค. 2569 ข้อ 2) =====
+# เคสจริง 30 ต.ค.: บอทลงนัด "ช่างตัดหญ้า/ตัดต้นไม้ 3 พ.ย. 09:30" จากข้อความของอาหนุ่ย
+# แล้วอาหนุ่ยส่งข้อมูลติดต่อช่าง (เบอร์โทร + ลิงก์ Facebook) ตามมาในกลุ่ม แต่บอทไม่ได้เก็บเข้า description
+# ของนัดนั้นเลย — คนเปิดปฏิทินทีหลังจะไม่เห็นช่องทางติดต่อช่าง ต้องกลับไปไล่หาในแชตเอง
+# วิธีแก้แบบจำกัดขอบเขต (deterministic ล้วน ไม่ใช้ AI): เฉพาะข้อความที่มี "เบอร์โทร หรือ ลิงก์" ชัดเจน
+# และมาภายในหน้าต่างเดียวกับคำสั่งต่อเนื่องอื่น ๆ (LAST_EVENT 15 นาที, scope กลุ่ม/ผู้ส่งเดียวกัน)
+# ถึงจะผูกเป็นข้อมูลติดต่อของนัดล่าสุด — ข้อความเบอร์/ลิงก์ที่มาในเวลาปกติ (ไม่มีนัดสด) บอทจะไม่แตะ เงียบตามเดิม
+PHONE_RE = re.compile(r'0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}')
+URL_RE = re.compile(r'(https?://\S+|www\.\S+|facebook\.com/\S+|fb\.me/\S+|line\.me/\S+)')
+
+def extract_contact_info(text):
+    # คืนข้อความต้นฉบับ (ตัดสั้น 300 ตัวอักษร) ถ้าเป็นข้อมูลติดต่อที่แนบได้ ไม่ใช่คืน None
+    t = (text or '').strip()
+    if not (PHONE_RE.search(t) or URL_RE.search(t)):
+        return None
+    # กันชนนัดใหม่: ข้อความที่มี "เวลา + ตัวชี้วัน/คำว่านัดหรือเตือน" คือประกาศนัดของตัวเอง (แบบที่ Gemini จับลงปฏิทิน)
+    # ให้โหมดสร้างนัดจัดการ ไม่แย่งมาแนบกับนัดก่อนหน้า — ข้อมูลติดต่อตามนัดปกติจะมีแค่เบอร์/ลิงก์ ไม่มีเวลางานของตัวเอง
+    if re.search(r'\d{1,2}[:.]\d{2}|\d{1,2}\s*โมง', t):
+        day_or_cmd_cues = ['วันนี้', 'พรุ่งนี้', 'มะรืน', 'วันที่', 'นัด', 'เตือน',
+                           'วันจันทร์', 'วันอังคาร', 'วันพุธ', 'วันพฤหัส', 'วันศุกร์', 'วันเสาร์', 'วันอาทิตย์']
+        if any(c in t for c in day_or_cmd_cues) or any(v in t for v in QA_CREATE_VERBS):
+            return None
+    return t[:300]
+
+def insert_before_remind_marker(desc, line):
+    # description ของ event ที่บอทสร้างมี [remind:...] ปิดท้าย และตัวเตือนอ่านเลขเตือนจาก marker นี้
+    # ข้อมูลใหม่จึงต้องแทรก "ก่อน" marker เสมอ — ต่อท้าย marker จะทำให้ marker ไม่ปิดท้ายตามกฎเหล็กเดิม
+    desc = desc or ''
+    if '[remind:' in desc:
+        return re.sub(r'\[remind:[0-9,]+\]', lambda m: line + '\n' + m.group(0), desc, count=1)
+    return (desc + '\n' + line).strip() if desc else line
+
+def handle_contact_attach(event, msg_text):
+    # คืนข้อความตอบกลับ หรือ None ถ้าข้อความนี้ไม่ใช่ข้อมูลติดต่อของนัดล่าสุด (บอทเงียบตามเดิม)
+    contact = extract_contact_info(msg_text)
+    if not contact:
+        return None
+    scope = qa_scope(event)
+    now = datetime.now(pytz.timezone('Asia/Bangkok'))
+    if (not LAST_EVENT.get('event_id') or LAST_EVENT.get('scope') != scope
+            or not LAST_EVENT.get('expires') or now > LAST_EVENT['expires']):
+        return None
+    try:
+        service = get_calendar_service()
+        ev = service.events().get(calendarId=FAMILY_CALENDAR_ID, eventId=LAST_EVENT['event_id']).execute()
+        desc = ev.get('description', '') or ''
+        if contact in desc:
+            return f"📞 ข้อมูลติดต่อนี้บันทึกอยู่ในนัด \"{LAST_EVENT.get('summary', 'นัดหมาย')}\" แล้วครับ"
+        line = f"📞 ข้อมูลติดต่อ: {contact}"
+        new_desc = insert_before_remind_marker(desc, line)
+        service.events().patch(
+            calendarId=FAMILY_CALENDAR_ID,
+            eventId=LAST_EVENT['event_id'],
+            body={'description': new_desc},
+        ).execute()
+        return (f"📞 บันทึกข้อมูลติดต่อลงนัดให้แล้วครับ\n"
+                f"📌 หัวข้อ: {LAST_EVENT.get('summary', 'นัดหมาย')}\n"
+                f"📞 {contact}")
+    except Exception as e:
+        print(f"Contact attach error: {e}")
+        return "❌ บันทึกข้อมูลติดต่อไม่สำเร็จครับ ลองส่งใหม่อีกครั้งนะครับ"
 
 def reminder_due(fire_time, now, grace_minutes=5):
     # ถึงเวลาเตือนหรือยัง: ยิงได้ตั้งแต่ fire_time ถึง fire_time + grace (เผื่อรอบเช็กคลาด/process เพิ่งตื่น)
@@ -872,6 +957,7 @@ def answer_schedule_question(text):
 สำคัญ: คำว่า นัดหมาย / นัด / ตาราง / แผน ในคำถาม หมายถึงทุกรายการในรายการข้างบน โค้ดคัดตามช่วงเวลามาให้แล้ว
 ห้ามคัดออกหรือปฏิเสธด้วยเหตุว่าไม่ตรงประเภทนัด — ถ้ารายการข้างบนมีรายการอยู่ ห้ามตอบว่าไม่มีเด็ดขาด ให้เล่าให้ครบทุกรายการ
 เฉพาะกรณีที่ถามเจาะจงเรื่องใดเรื่องหนึ่ง (เช่น นัดหมอ) แล้วในรายการไม่มีเรื่องนั้นจริง ๆ ถึงตอบว่าไม่มีนัดลักษณะนั้นในช่วงนี้
+{ALIAS_NOTE_FOR_AI} — ถ้าคำถามเอ่ยถึงคนด้วยชื่อใดในกลุ่มเดียวกัน ให้ตอบจากรายการที่ใช้ชื่อใดก็ได้ในกลุ่มนั้น (เช่น ถาม "นัดอากง" ให้รวมรายการที่เขียนว่า เทียนชัย หรือ เชฟเทียน ด้วย)
 ขึ้นต้นคำตอบด้วย 📅 และลงท้ายประโยคด้วย "ครับ"
 """,
                 )
@@ -992,6 +1078,7 @@ def summarize_plan_from_chat(context):
 - ถ้าไม่ระบุเวลาจบ ให้ end_time เป็น null
 - แปลงวันที่เป็น YYYY-MM-DD โดยอิงวันปัจจุบันด้านบน ("พรุ่งนี้" = วันถัดไป)
 - ห้ามแต่งรายละเอียดที่ไม่มีในบทสนทนา
+- เรื่องชื่อคน: {ALIAS_RULE_FOR_AI} (ใช้กฎเดียวกันใน title และ participants)
 
 ตอบเป็น JSON อย่างเดียวเท่านั้น รูปแบบ:
 {{"found": true, "title": "ชื่อนัดสั้น ๆ", "date": "YYYY-MM-DD", "start_time": "HH:MM", "end_time": "HH:MM หรือ null", "location": "สถานที่ หรือ null", "details": "รายละเอียดสั้น ๆ", "participants": ["ชื่อผู้เกี่ยวข้อง"]}}"""
@@ -1045,6 +1132,14 @@ def add_plan_to_calendar(plan):
         if plan.get('location'):
             event['location'] = plan['location']
         result = service.events().insert(calendarId=FAMILY_CALENDAR_ID, body=event).execute()
+        # จำนัดล่าสุดไว้เหมือน add_to_calendar (เพิ่ม 31 ต.ค. 2569 ข้อ 2): คำสั่งต่อเนื่องหลังนัดแบบสรุปแผน
+        # เช่น "เพิ่มแจ้งเตือน..." และข้อความข้อมูลติดต่อที่ส่งตามมา จะได้ผูกกับนัดนี้ได้ ไม่ใช่เฉพาะนัดที่สร้างจาก parse ตรง ๆ
+        LAST_EVENT['event_id'] = result.get('id')
+        LAST_EVENT['summary'] = plan['title']
+        LAST_EVENT['start_time'] = f"{plan['date']}T{plan['start_time']}:00"
+        LAST_EVENT['reminders'] = [60]
+        LAST_EVENT['scope'] = None
+        LAST_EVENT['expires'] = datetime.now(pytz.timezone('Asia/Bangkok')) + timedelta(minutes=15)
         # หมายเหตุจากเคสจริง 22 ต.ค.: override การเตือนบางครั้งไม่ติดตอน insert (อีเวนต์แรกได้ useDefault แทน)
         # → ย้ำด้วย patch อีกรอบหลังสร้าง เพื่อให้เตือนก่อน 60 นาทีตามที่ประกาศในกลุ่ม
         try:
@@ -1098,6 +1193,7 @@ def handle_plan_flow(event, msg_text):
                 link = add_plan_to_calendar(pending)
                 PENDING_PLAN['data'] = None
                 if link:
+                    LAST_EVENT['scope'] = qa_scope(event)
                     d = tz.localize(datetime.strptime(pending['date'], '%Y-%m-%d'))
                     text = (f"📅 **ลงปฏิทินครอบครัวแล้วครับ!**\n"
                             f"📌 {pending['title']}\n"
@@ -1425,6 +1521,17 @@ def handle_text_message(event):
                 reminder_reply = None
             if reminder_reply:
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reminder_reply))
+                return
+
+        # 0.95 แนบข้อมูลติดต่อ (เบอร์/ลิงก์) ลงนัดล่าสุดที่เพิ่งสร้าง (เพิ่ม 31 ต.ค. 2569 ข้อ 2)
+        if not qa_answer and not plan_handled and not travel_handled:
+            try:
+                contact_reply = handle_contact_attach(event, msg_text)
+            except Exception as e:
+                print(f"Contact attach flow error: {e}")
+                contact_reply = None
+            if contact_reply:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=contact_reply))
                 return
 
         # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5 หรือจัดการในข้อ 0.7/0.8)
