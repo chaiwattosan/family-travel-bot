@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-10-31-r5 — รอบ 5 (เวลาเตือนเลขคำไทย + รั้วกันคำสั่งเพิ่มเตือนหลุดไปสร้างนัดใหม่ + ชื่อ canonical ใน summary)
+# BOT VERSION: 2026-10-31-r7 — รอบ 7 (ข้อ 3 + ความหมายเรื่องเวลาของบ้านนี้: นัด รพ. เน้นเตือนล่วงหน้า 1 วัน/ไม่มีเวลา=08:00, บอทถามเวลาออกบ้านหลังสร้างนัด)
 import re
 import json
 import time
@@ -287,6 +287,113 @@ def normalize_person_names(text):
     for old, new in PERSON_NAME_REPLACEMENTS:
         out = out.replace(old, new)
     return out
+
+# ===== ความหมายเรื่องเวลาของนัด 2 แบบ (นายอธิบาย 31 ต.ค. 2569 รอบ 7) =====
+# แบบที่ 1 นัดไป รพ.: หัวใจคือ "แจ้งเตือนล่วงหน้า 1 วัน" (ไว้เตรียมตัว/เอกสาร) ส่วนเวลาในใบนัดคือเวลาเจอหมอ
+#   ไม่ใช่เวลาออกบ้าน — บ้านนี้ออกบ้าน 07:00 ไม่เกิน 08:00 สำหรับนัดเช้า ส่วนนัดบ่าย (ไม่บ่อย) ออกก่อนเที่ยง
+# แบบที่ 2 นัดออกไปข้างนอกทั่วไป: หัวใจคือ "เวลาออกบ้าน" ที่ชัดเจน (เช่น 07:00/08:00 หรือไปห้าง/กินข้าวเที่ยง ~10:00–10:30)
+#   ถ้าไม่ระบุ บอทถาม "ออกบ้านกี่โมง" ตามหลังได้เลย — นายบอกถามทุกครั้งก็ยังได้ ทุกคนในกลุ่มจะได้รู้พร้อมกัน
+HOSPITAL_KEYWORDS = ['โรงพยาบาล', 'รพ.', 'หาหมอ', 'พบหมอ', 'พบแพทย์', 'หมอนัด', 'คลินิก', 'ทำฟัน', 'ทันต',
+                     'เจาะเลือด', 'เอกซเรย์', 'x-ray', 'mri', 'ตรวจสุขภาพ', 'ฉีดวัคซีน', 'ใบนัด']
+
+def is_hospital_appointment(*texts):
+    joined = ' '.join(t for t in texts if t).lower()
+    return any(k in joined for k in HOSPITAL_KEYWORDS)
+
+def ensure_hospital_reminders(reminder_list, *texts):
+    # นัด รพ. ต้องมีเตือนล่วงหน้า 1 วันเสมอ (ถ้าผู้ใช้ยังไม่ได้กำหนดไว้) — คืนรายการเรียงมากไปน้อย สูงสุด 5 ค่า
+    if not is_hospital_appointment(*texts):
+        return reminder_list
+    return sorted(set([1440] + [int(m) for m in reminder_list]), reverse=True)[:5]
+
+PENDING_DEPARTURE = {'event_id': None, 'summary': None, 'scope': None, 'expires': None}
+DEPARTURE_QUESTION = ("🚗 นัดนี้ออกบ้านกันกี่โมงครับ? พิมพ์บอกสั้น ๆ ได้เลย (เช่น \"ออกบ้าน 7 โมง\") "
+                      "บอทจะจดลงนัดให้ทุกคนเห็นครับ")
+STAY_HOME_KEYWORDS = ['ทานยา', 'กินยา', 'เข้านอน', 'เปิดไฟ', 'ปิดไฟ', 'ออกกำลังกาย']
+
+def should_ask_departure(summary, source_text, recurrence):
+    # ไม่ถามกับนัดทำซ้ำ (กิจวัตร) และนัดที่ทำที่บ้าน ไม่ต้อง "ออกบ้าน" ไปไหน
+    if recurrence:
+        return False
+    joined = f"{summary or ''} {source_text or ''}"
+    if any(k in joined for k in STAY_HOME_KEYWORDS):
+        return False
+    return True
+
+def remember_departure_question(summary, scope):
+    if not LAST_EVENT.get('event_id'):
+        return
+    PENDING_DEPARTURE['event_id'] = LAST_EVENT['event_id']
+    PENDING_DEPARTURE['summary'] = summary
+    PENDING_DEPARTURE['scope'] = scope
+    PENDING_DEPARTURE['expires'] = datetime.now(pytz.timezone('Asia/Bangkok')) + timedelta(minutes=10)
+
+def parse_departure_time(text):
+    # คำตอบเวลาออกบ้านสั้น ๆ เช่น "7 โมง" / "ออกบ้าน 7 โมงครึ่ง" / "ออกบ้านตอนสองทุ่ม" → (ชั่วโมง, นาที) หรือ None
+    t = (text or '').strip()
+    if len(t) > 30:
+        return None
+    if any(v in t for v in QA_CREATE_VERBS) or 'ไหม' in t or 'มั้ย' in t or '?' in t:
+        return None
+    if not any(w in t for w in ['โมง', 'ทุ่ม', 'ตี', ':', 'เที่ยง']):
+        return None
+    if 'ก่อนเที่ยง' in t:
+        return None  # "ออกก่อนเที่ยง" เป็นช่วงเวลา ไม่ใช่เวลาตายตัว — ไม่ตีความเป็น 12:00 มั่ว ๆ
+    seg = _normalize_thai_clock_words(t)
+    half = 30 if 'ครึ่ง' in seg else 0
+    m = re.search(r'(\d{1,2})[:.](\d{2})', seg)
+    if m:
+        return int(m.group(1)) % 24, int(m.group(2)) % 60
+    m = re.search(r'บ่าย\s*(\d{1,2})', seg)
+    if m:
+        return 12 + (int(m.group(1)) % 12), half
+    m = re.search(r'ตี\s*(\d{1,2})', seg)
+    if m:
+        return int(m.group(1)) % 12, half
+    m = re.search(r'(\d{1,2})\s*ทุ่ม', seg)
+    if m:
+        return (18 + int(m.group(1))) % 24, half
+    m = re.search(r'(\d{1,2})\s*โมง', seg)
+    if m:
+        h = int(m.group(1)) % 12
+        if 'เย็น' in seg and h < 12:
+            h += 12
+        return h, half
+    if 'เที่ยงคืน' in seg:
+        return 0, 0
+    if 'เที่ยง' in seg:
+        return 12, 0
+    return None
+
+def handle_departure_answer(event, msg_text):
+    # คืนข้อความตอบกลับ หรือ None ถ้าข้อความนี้ไม่ใช่คำตอบเวลาออกบ้านของนัดที่บอทถามค้างไว้
+    parsed = parse_departure_time(msg_text)
+    if not parsed:
+        return None
+    scope = qa_scope(event)
+    now = datetime.now(pytz.timezone('Asia/Bangkok'))
+    if (not PENDING_DEPARTURE.get('event_id') or PENDING_DEPARTURE.get('scope') != scope
+            or not PENDING_DEPARTURE.get('expires') or now > PENDING_DEPARTURE['expires']):
+        return None
+    hh, mm = parsed
+    try:
+        service = get_calendar_service()
+        ev = service.events().get(calendarId=FAMILY_CALENDAR_ID, eventId=PENDING_DEPARTURE['event_id']).execute()
+        desc = ev.get('description', '') or ''
+        line = f"🚗 เวลาออกบ้าน: {hh:02d}:{mm:02d} น."
+        if line not in desc:
+            new_desc = insert_before_remind_marker(desc, line)
+            service.events().patch(
+                calendarId=FAMILY_CALENDAR_ID,
+                eventId=PENDING_DEPARTURE['event_id'],
+                body={'description': new_desc},
+            ).execute()
+        summary = PENDING_DEPARTURE.get('summary', 'นัดหมาย')
+        PENDING_DEPARTURE['event_id'] = None
+        return f"🚗 รับทราบครับ นัด \"{summary}\" ออกบ้าน {hh:02d}:{mm:02d} น. นะครับ (จดลงปฏิทินให้แล้วครับ)"
+    except Exception as e:
+        print(f"Departure answer error: {e}")
+        return None
 
 def parse_calendar_intent(text):
     if not gemini_client:
@@ -789,6 +896,8 @@ def is_image_summary_request(text):
     t = text.strip()
     if any(w in t for w in ['เที่ยวบิน', 'ตั๋ว', 'ไฟลต์']):
         return False
+    if any(w in t for w in ['ใบนัด', 'นัดจากรูป']):
+        return False  # งานถอดรูปใบนัด (ขั้น 0.85) มีโฟลว์ของตัวเองเหมือนเที่ยวบิน
     return ('สรุป' in t or 'อ่าน' in t) and any(w in t for w in ['รูป', 'ภาพ'])
 
 def fmt_thai_date(dt):
@@ -1512,6 +1621,216 @@ def handle_travel_flow(event, msg_text):
         return True
     return False
 
+# ===== โหมดใบนัดจากรูป (เพิ่ม 31 ต.ค. 2569 ข้อ 3) =====
+# เคสจริง 30 ต.ค. 2569: อากงแคปหน้าจอแอป รพ. (นัด 12 พ.ย. 09:30 ห้องตรวจ 110) ลงกลุ่ม แต่วันนั้นบอทอ่านรูปได้
+# แค่บรรยาย + ลงชีต นายต้องถอดข้อความพิมพ์ส่งบอทเอง — รอบนี้ให้บอทสกัดใบนัดจากรูปที่ส่งเข้ากลุ่มโดยตรง:
+# รูปเข้า → AI ถอดเป็น JSON → โค้ด validation เข้ม (รูปแบบวันที่/เวลา + แปลง พ.ศ. + ช่วงวันที่) → เสนอ "ร่าง" ในกลุ่ม
+# → คนพิมพ์ยืนยันก่อนเสมอ บอทไม่มีสิทธิ์ลงปฏิทินเองจากรูป (หลักเดียวกับโหมดสรุปนัด/เที่ยวบิน)
+# รูปที่ไม่ผ่าน validation (รูปอาหาร/รูปทั่วไป) จะเงียบสนิท ไหลไป log ตามเดิม ไม่เสนอร่างกวนกลุ่ม
+PENDING_APPT = {'data': None, 'expires': None, 'group_id': None}
+APPT_TRIGGERS = ['ลงนัดจากรูป', 'สรุปใบนัด', 'อ่านใบนัด', 'ลงใบนัด', 'สรุปนัดจากรูป']
+APPT_DEFAULT_TIME = '08:00'  # ใบนัด รพ. บางใบมีแค่วันไม่มีเวลา — บ้านนี้ออกบ้านไป รพ. กัน 7:00 ไม่เกิน 08:00
+# จึงตั้ง 08:00 เป็นค่าตั้งต้น (นายอธิบาย 31 ต.ค.: นัด รพ. เน้น "แจ้งเตือนล่วงหน้า 1 วัน" มากกว่าเวลาเป๊ะ ๆ)
+# และบอกในร่างชัด ๆ ว่าเป็นค่าตั้งต้น ไม่เงียบใส่เอง
+
+def validate_appointment(data):
+    # ตรวจข้อมูลที่ AI ถอดมาก่อนเชื่อ (แบบเดียวกับ validate_itinerary)
+    try:
+        if not data or not data.get('is_appointment'):
+            return None
+        tz = pytz.timezone('Asia/Bangkok')
+        today = datetime.now(tz).date()
+        d = datetime.strptime(str(data.get('date', '')), '%Y-%m-%d').date()
+        if d.year > 2400:  # AI ส่งปี พ.ศ. หลุดมา → แปลงเป็น ค.ศ.
+            d = d.replace(year=d.year - 543)
+        if not (today - timedelta(days=1) <= d <= today + timedelta(days=370)):
+            return None
+        raw_time = data.get('time')
+        time_is_default = False
+        if raw_time:
+            datetime.strptime(str(raw_time), '%H:%M')
+            t = str(raw_time)
+        else:
+            t = APPT_DEFAULT_TIME
+            time_is_default = True
+        patient = (str(data.get('patient_name') or '')).strip() or None
+        dept = (str(data.get('department') or '')).strip() or None
+        hospital = (str(data.get('hospital') or '')).strip() or None
+        if not (patient or dept or hospital):
+            return None
+        title = (str(data.get('title') or '')).strip() or None
+        if not title:
+            title = dept or 'พบแพทย์ตามนัด'
+        if patient and patient not in title and not title.startswith('พา'):
+            # หัวข้อต้องบอกว่าเป็นนัดของใคร ไม่งั้นปฏิทินจะมีแต่นัดลอย ๆ ไม่รู้ของใคร
+            # (ชื่อจะถูก normalize เป็นชื่อ canonical เช่น อากง ตอนแสดงร่าง/ลงปฏิทิน)
+            title = f"พา{patient}ไป{title}"
+        return {
+            'is_appointment': True,
+            'patient_name': patient,
+            'title': title,
+            'department': dept,
+            'hospital': hospital,
+            'date': d.strftime('%Y-%m-%d'),
+            'time': t,
+            'time_is_default': time_is_default,
+            'note': (str(data.get('note') or '')).strip() or None,
+        }
+    except Exception as e:
+        print(f"Appointment validate error: {e}")
+        return None
+
+def extract_appointment_from_image(image_bytes):
+    if not gemini_client or not image_bytes:
+        return None
+    tz = pytz.timezone('Asia/Bangkok')
+    today_str = datetime.now(tz).strftime('%Y-%m-%d')
+    prompt = f"""รูปนี้อาจเป็น "ใบนัดหมายทางการแพทย์" เช่น ใบนัดโรงพยาบาล ภาพแคปหน้าจอแอปโรงพยาบาลที่มีนัดหมาย ใบนัดคลินิก/ทันตกรรม หรือบัตรนัด
+
+งานของคุณ: ถอดข้อมูลนัดหมายจากรูปเฉพาะที่เห็นในรูปจริง ๆ ห้ามเดาหรือแต่งเพิ่ม
+
+กฎสำคัญ:
+- ถ้ารูปไม่ใช่ใบนัดหมายทางการแพทย์เลย ให้ตอบ {{"is_appointment": false}} เท่านั้น
+- วันที่: ตอบเป็นปีคริสต์ศักราชรูปแบบ YYYY-MM-DD เสมอ — ถ้าในรูปเป็นปีพุทธศักราช (เช่น 2569) ให้ลบ 543 ก่อน (2569 → 2026) ถ้าระบุเป็นชื่อเดือนภาษาไทยหรือวันในสัปดาห์ ให้แปลงเป็นวันที่จริงโดยเทียบกับวันนี้ ({today_str})
+- เวลา: รูปแบบ HH:MM (24 ชั่วโมง) ถ้าในรูปไม่มีเวลา ให้ใส่ null ห้ามเดา
+- ชื่อผู้ป่วย: คัดลอกตามที่พิมพ์ในเอกสาร
+- ห้องตรวจ/เลขคิว/การเตรียมตัว/หมายเหตุอื่น: ใส่รวมใน note
+- title: หัวข้อนัดสั้น ๆ ภาษาไทย เช่น "พบหมอเบาหวาน" หรือ "ตรวจ MRI"
+
+ตอบเป็น JSON อย่างเดียวเท่านั้น รูปแบบ:
+{{"is_appointment": true, "patient_name": "ชื่อผู้ป่วย หรือ null", "title": "หัวข้อสั้น ๆ หรือ null", "department": "แผนก/คลินิก หรือ null", "hospital": "ชื่อโรงพยาบาล/สถานพยาบาล หรือ null", "date": "YYYY-MM-DD หรือ null", "time": "HH:MM หรือ null", "note": "รายละเอียดอื่น หรือ null"}}"""
+    for attempt in range(3):
+        try:
+            response = gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[prompt, types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")],
+            )
+            raw = response.text.strip()
+            if raw.startswith('```'):
+                raw = raw.strip('`')
+                if raw.lower().startswith('json'):
+                    raw = raw[4:].strip()
+            data = json.loads(raw)
+            if not data.get('is_appointment'):
+                return {'is_appointment': False}
+            valid = validate_appointment(data)
+            if valid:
+                return valid
+            print(f"Appointment attempt {attempt+1}: ถอดได้แต่ข้อมูลไม่ผ่านการตรวจ ลองใหม่")
+            time.sleep(1)
+        except Exception as e:
+            print(f"Appointment extract attempt {attempt+1} error: {e}")
+            time.sleep(2)
+    return None
+
+def format_appt_draft(appt):
+    tz = pytz.timezone('Asia/Bangkok')
+    d = tz.localize(datetime.strptime(appt['date'], '%Y-%m-%d'))
+    lines = ["📋 **บอทเห็นใบนัดในรูปนี้ครับ** เสนอร่างนัดให้ตรวจก่อนลงปฏิทิน:"]
+    lines.append(f"📌 หัวข้อ: {normalize_person_names(appt['title'])}")
+    if appt.get('patient_name'):
+        lines.append(f"👤 ผู้ป่วย: {appt['patient_name']}")
+    if appt.get('department'):
+        lines.append(f"🏥 แผนก: {appt['department']}")
+    if appt.get('hospital'):
+        lines.append(f"📍 สถานที่: {appt['hospital']}")
+    lines.append(f"🗓 {fmt_thai_date(d)} เวลา {appt['time']} น.")
+    if appt.get('time_is_default'):
+        lines.append("⏰ ในรูปไม่ระบุเวลา บอทใส่ 08:00 น. ให้ก่อนนะครับ (เวลาเตรียมออกบ้านไป รพ. ปกติของบ้านเรา — สั่งแก้เวลาได้หลังลงปฏิทิน)")
+    if appt.get('note'):
+        lines.append(f"📝 {appt['note']}")
+    lines.append("พิมพ์ **'ตกลง'** เพื่อลงปฏิทินครอบครัว หรือ **'ไม่เอา'** เพื่อยกเลิก (ร่างรอ 10 นาทีครับ)")
+    return "\n".join(lines)
+
+def add_appt_to_calendar(appt):
+    title = normalize_person_names(appt['title'])
+    start_str = f"{appt['date']}T{appt['time']}:00"
+    # ใบนัด = นัด รพ. เสมอ → เตือนล่วงหน้า 1 วัน (หัวใจของนัดแบบนี้) + 30 นาทีก่อนเวลาเจอหมอ
+    link = add_to_calendar(title, start_str, [1440, 30])
+    if not link:
+        return None
+    # เติมรายละเอียดจากใบนัดลง description ของอีเวนต์ (แทรกก่อน [remind:] ตามกฎเหล็กเรื่อง marker)
+    details = []
+    if appt.get('patient_name'):
+        details.append(f"ผู้ป่วย: {appt['patient_name']}")
+    if appt.get('department'):
+        details.append(f"แผนก: {appt['department']}")
+    if appt.get('hospital'):
+        details.append(f"สถานที่: {appt['hospital']}")
+    if appt.get('note'):
+        details.append(f"หมายเหตุ: {appt['note']}")
+    if appt.get('time_is_default'):
+        details.append("เวลาในใบนัดไม่ระบุ — บอทตั้ง 08:00 น. ให้ก่อน")
+    details.append("(นัดนี้บอทถอดจากรูปใบนัด และมีสมาชิกยืนยันก่อนลงปฏิทิน)")
+    if LAST_EVENT.get('event_id'):
+        try:
+            service = get_calendar_service()
+            ev = service.events().get(calendarId=FAMILY_CALENDAR_ID, eventId=LAST_EVENT['event_id']).execute()
+            desc = ev.get('description', '') or ''
+            new_desc = insert_before_remind_marker(desc, "\n".join(details))
+            service.events().patch(
+                calendarId=FAMILY_CALENDAR_ID,
+                eventId=LAST_EVENT['event_id'],
+                body={'description': new_desc},
+            ).execute()
+        except Exception as e:
+            print(f"Appointment details patch error: {e}")
+    return link
+
+def handle_appt_flow(event, msg_text):
+    # คืนค่า True = จัดการข้อความนี้แล้ว (โฟลว์เดียวกับ handle_travel_flow)
+    source = event.source
+    group_id = getattr(source, 'group_id', None) or getattr(source, 'room_id', None) or getattr(source, 'user_id', None)
+    tz = pytz.timezone('Asia/Bangkok')
+    now = datetime.now(tz)
+    pending = PENDING_APPT.get('data')
+    if pending and PENDING_APPT.get('expires'):
+        if now > PENDING_APPT['expires']:
+            PENDING_APPT['data'] = None
+            pending = None
+        elif PENDING_APPT.get('group_id') == group_id:
+            if is_reject_word(msg_text):
+                PENDING_APPT['data'] = None
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="รับทราบครับ ไม่ลงใบนัดนี้ลงปฏิทิน"))
+                return True
+            if is_confirm_word(msg_text):
+                link = add_appt_to_calendar(pending)
+                PENDING_APPT['data'] = None
+                if link:
+                    LAST_EVENT['scope'] = qa_scope(event)
+                    remember_departure_question(normalize_person_names(pending['title']), qa_scope(event))
+                    d = tz.localize(datetime.strptime(pending['date'], '%Y-%m-%d'))
+                    text = (f"📅 **ลงปฏิทินครอบครัวแล้วครับ!**\n"
+                            f"📌 {normalize_person_names(pending['title'])}\n"
+                            f"🗓 {fmt_thai_date(d)} เวลา {pending['time']} น.\n"
+                            f"🔔 แจ้งเตือนล่วงหน้า 1 วัน และ 30 นาทีครับ\n"
+                            f"{DEPARTURE_QUESTION}")
+                else:
+                    text = "❌ ลงปฏิทินไม่สำเร็จ ลองพิมพ์ 'ลงนัดจากรูป' ให้บอททำร่างใหม่นะครับ"
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=text))
+                return True
+            return False  # ข้อความอื่นระหว่างรอร่าง — ปล่อย flow ปกติ ร่างยังรอต่อ
+    if any(t in msg_text for t in APPT_TRIGGERS):
+        found = None
+        for url in find_latest_image_urls(3):
+            image_bytes = download_image_bytes(url)
+            if not image_bytes:
+                continue
+            result = extract_appointment_from_image(image_bytes)
+            if result and result.get('is_appointment'):
+                found = result
+                break
+        if not found:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(
+                text="🔍 เราดูรูปล่าสุดในบันทึกแล้ว ยังไม่เจอใบนัดที่ถอดได้ครับ — ส่งรูปใบนัดเข้ากลุ่มก่อน แล้วพิมพ์ 'ลงนัดจากรูป' อีกครั้งนะครับ"))
+            return True
+        PENDING_APPT['data'] = found
+        PENDING_APPT['expires'] = now + timedelta(minutes=10)
+        PENDING_APPT['group_id'] = group_id
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=format_appt_draft(found)))
+        return True
+    return False
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     try:
@@ -1573,8 +1892,16 @@ def handle_text_message(event):
             except Exception as e:
                 print(f"Travel flow error: {e}")
 
-        # 0.9 คำสั่งต่อเนื่อง "เพิ่มแจ้งเตือนล่วงหน้า..." สำหรับนัดล่าสุดที่เพิ่งสร้าง (เพิ่ม 30 ต.ค. 2569)
+        # 0.85 โหมดใบนัดจากรูป: คำยืนยัน/ปฏิเสธร่างใบนัดที่เสนอไว้ หรือทริกเกอร์ให้ถอดรูปล่าสุดเป็นนัด (เพิ่ม 31 ต.ค. 2569 ข้อ 3)
+        appt_handled = False
         if not qa_answer and not plan_handled and not travel_handled:
+            try:
+                appt_handled = handle_appt_flow(event, msg_text)
+            except Exception as e:
+                print(f"Appointment flow error: {e}")
+
+        # 0.9 คำสั่งต่อเนื่อง "เพิ่มแจ้งเตือนล่วงหน้า..." สำหรับนัดล่าสุดที่เพิ่งสร้าง (เพิ่ม 30 ต.ค. 2569)
+        if not qa_answer and not plan_handled and not travel_handled and not appt_handled:
             try:
                 reminder_reply = handle_add_reminder_request(event, msg_text)
             except Exception as e:
@@ -1585,7 +1912,7 @@ def handle_text_message(event):
                 return
 
         # 0.95 แนบข้อมูลติดต่อ (เบอร์/ลิงก์) ลงนัดล่าสุดที่เพิ่งสร้าง (เพิ่ม 31 ต.ค. 2569 ข้อ 2)
-        if not qa_answer and not plan_handled and not travel_handled:
+        if not qa_answer and not plan_handled and not travel_handled and not appt_handled:
             try:
                 contact_reply = handle_contact_attach(event, msg_text)
             except Exception as e:
@@ -1595,14 +1922,27 @@ def handle_text_message(event):
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=contact_reply))
                 return
 
+        # 0.97 คำตอบ "ออกบ้านกี่โมง" สำหรับนัดที่บอทเพิ่งถามไว้ตอนสร้างนัด (เพิ่ม 31 ต.ค. 2569 รอบ 7)
+        if not qa_answer and not plan_handled and not travel_handled and not appt_handled:
+            try:
+                departure_reply = handle_departure_answer(event, msg_text)
+            except Exception as e:
+                print(f"Departure answer flow error: {e}")
+                departure_reply = None
+            if departure_reply:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=departure_reply))
+                return
+
         # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5 หรือจัดการในข้อ 0.7/0.8)
-        cal_intent = None if (qa_answer or plan_handled or travel_handled) else parse_calendar_intent(msg_text)
+        cal_intent = None if (qa_answer or plan_handled or travel_handled or appt_handled) else parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
             summary = normalize_person_names(cal_intent.get("summary", "นัดหมายครอบครัว"))
             start_time = cal_intent.get("start_time")
             reminder_list = cal_intent.get("reminder_minutes", [30])
             if isinstance(reminder_list, (int, float)):
                 reminder_list = [int(reminder_list)]
+            # นัด รพ. ที่พิมพ์สั่งตรง ๆ ก็ใช้กฎเดียวกัน: เติมเตือนล่วงหน้า 1 วันให้เสมอ (รอบ 7)
+            reminder_list = ensure_hospital_reminders(reminder_list, msg_text, summary)
             recurrence = cal_intent.get("recurrence")
             recurrence_days = cal_intent.get("recurrence_days") or []
 
@@ -1626,6 +1966,9 @@ def handle_text_message(event):
                         f"🔔 แจ้งเตือนล่วงหน้า: {lead_text}"
                         f"{recur_text}"
                     )
+                    if should_ask_departure(summary, msg_text, recurrence):
+                        remember_departure_question(summary, qa_scope(event))
+                        reply_text += f"\n{DEPARTURE_QUESTION}"
                 else:
                     reply_text = "❌ เกิดข้อผิดพลาดในการบันทึกปฏิทิน"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
@@ -1681,6 +2024,20 @@ def handle_image_message(event):
         # 3) บันทึกลง Sheets รูปแบบเดียวกับ log ฉบับเดิม: คอลัมน์ G = รูปตัวอย่าง (=IMAGE), H = ลิงก์ Cloudinary
         image_formula = f'=IMAGE("{image_url}")' if image_url else ""
         append_log_row([thai_time, sender_name, category, "-", summary_text, 0, image_formula, image_url or ""])
+
+        # 3.5) โหมดใบนัด: รูปที่ส่งเข้า "กลุ่มครอบครัว" ลองสกัดใบนัด — ผ่าน validation เข้มเท่านั้นถึงเสนอร่างในกลุ่ม
+        # (รูปทั่วไปจะไม่ผ่านและเงียบไปตามเดิม; รูปในแชต 1-1 กับแอดมินไม่เข้าโฟลว์นี้)
+        try:
+            gid = getattr(event.source, 'group_id', None)
+            if gid and FAMILY_GROUP_ID and gid == FAMILY_GROUP_ID:
+                appt = extract_appointment_from_image(image_bytes)
+                if appt and appt.get('is_appointment'):
+                    PENDING_APPT['data'] = appt
+                    PENDING_APPT['expires'] = datetime.now(pytz.timezone('Asia/Bangkok')) + timedelta(minutes=10)
+                    PENDING_APPT['group_id'] = gid
+                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=format_appt_draft(appt)))
+        except Exception as e:
+            print(f"Appointment slip extract error: {e}")
 
         # 4) แจ้งแอดมิน (แนบลิงก์รูปให้กดดูได้)
         notify_admin(sender_name, category, f"📷 {summary_text}", thai_time, image_url)
