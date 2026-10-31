@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-10-31-r4 — รอบ 4 (alias ชื่อคนในครอบครัว + แนบข้อมูลติดต่อลงนัดล่าสุด)
+# BOT VERSION: 2026-10-31-r5 — รอบ 5 (เวลาเตือนเลขคำไทย + รั้วกันคำสั่งเพิ่มเตือนหลุดไปสร้างนัดใหม่ + ชื่อ canonical ใน summary)
 import re
 import json
 import time
@@ -268,6 +268,26 @@ ALIAS_RULE_FOR_AI = (
     + " — ถ้าข้อความเอ่ยถึงคนเหล่านี้ด้วยชื่อใดก็ตาม ให้ใช้ชื่อแรกของกลุ่ม (อากง / อาหนุ่ย / อานุก) ใน summary เสมอ"
 )
 
+# ตัวแทนชื่อแบบ deterministic สำหรับ "ชื่อเฉพาะยาว" ที่ไม่มีความกำกวม (เพิ่ม 31 ต.ค. 2569 รอบ 5)
+# เหตุผล: เทสต์สด r4 prompt อย่างเดียวไม่พอ — Gemini ยังลอกชื่อจากประโยคผู้ใช้ตรง ๆ ("พานายเทียนชัย ตั้งทอง")
+# ชื่อเต็ม/ชื่อเฉพาะแบบนี้แทนที่ด้วยโค้ดได้ปลอดภัย (เรียงยาวก่อนสั้น กันแทนที่ซ้อน) ส่วนชื่อสั้นกำกวมยังปล่อยให้ AI ตีบริบท
+PERSON_NAME_REPLACEMENTS = [
+    ('นายเทียนชัย ตั้งทอง', 'อากง'),
+    ('คุณเทียนชัย ตั้งทอง', 'อากง'),
+    ('เทียนชัย ตั้งทอง', 'อากง'),
+    ('เชฟเทียน', 'อากง'),
+    ('เทียนชัย', 'อากง'),
+    ('ช่างนุก', 'อานุก'),
+]
+
+def normalize_person_names(text):
+    if not text:
+        return text
+    out = text
+    for old, new in PERSON_NAME_REPLACEMENTS:
+        out = out.replace(old, new)
+    return out
+
 def parse_calendar_intent(text):
     if not gemini_client:
         return None
@@ -404,6 +424,23 @@ def parse_add_reminder_minutes(text):
         return int(m.group(1))
     return None
 
+THAI_NUM_WORDS = {
+    'สิบเอ็ด': 11, 'สิบสอง': 12, 'สิบ': 10, 'หนึ่ง': 1, 'สอง': 2, 'สาม': 3, 'สี่': 4,
+    'ห้า': 5, 'หก': 6, 'เจ็ด': 7, 'แปด': 8, 'เก้า': 9,
+}
+
+def _normalize_thai_clock_words(seg):
+    # แปลงเลขคำไทยในวลีบอกเวลาให้เป็นตัวเลขก่อน regex จับ (เพิ่ม 31 ต.ค. 2569 รอบ 5)
+    # เคสจริงเทสต์สด r4: นายพิมพ์ "เพิ่มแจ้งเตือนวันนี้ตอนสองทุ่มให้ด้วย" — parser เดิมรับเฉพาะตัวเลข
+    # จึงอ่าน "สองทุ่ม" ไม่ออก คำสั่งหลุดไปโหมดสร้างนัดจนเกิดนัดปลอมชื่อ "แจ้งเตือน" และทับ LAST_EVENT
+    words = sorted(THAI_NUM_WORDS, key=len, reverse=True)
+    alt = '|'.join(words)
+    seg = re.sub(rf'(ตี\s*)({alt})', lambda m: f"ตี{THAI_NUM_WORDS[m.group(2)]}", seg)
+    seg = re.sub(rf'(บ่าย\s*)({alt})', lambda m: f"บ่าย{THAI_NUM_WORDS[m.group(2)]}", seg)
+    seg = re.sub(rf'({alt})(\s*ทุ่ม)', lambda m: f"{THAI_NUM_WORDS[m.group(1)]}ทุ่ม", seg)
+    seg = re.sub(rf'({alt})(\s*โมง)', lambda m: f"{THAI_NUM_WORDS[m.group(1)]}โมง", seg)
+    return seg
+
 def parse_absolute_reminder_clock(text):
     # เวลาเตือนแบบตายตัว เช่น "แจ้งตอน 8 โมงเช้า" → คืน (ชั่วโมง, นาที) หรือ None (เพิ่ม 30 ต.ค. 2569 รอบ 2)
     # เคสจริงจากเทสต์สด 20:47: นายขอ "แจ้งเตือนล่วงหน้าขอให้แจ้งตอน 8 โมงเช้าน่ะ" บอทเงียบ เพราะตัวดักเดิม
@@ -415,22 +452,26 @@ def parse_absolute_reminder_clock(text):
         return None
     if any(v in t for v in QA_CREATE_VERBS):
         return None
-    seg = t.split('ตอน', 1)[1]
+    seg = _normalize_thai_clock_words(t.split('ตอน', 1)[1])
+    half = 30 if 'ครึ่ง' in seg else 0
     m = re.search(r'(\d{1,2})[:.](\d{2})', seg)
     if m:
         return int(m.group(1)) % 24, int(m.group(2)) % 60
     m = re.search(r'บ่าย\s*(\d{1,2})\s*โมง', seg)
     if m:
-        return 12 + (int(m.group(1)) % 12), 0
+        return 12 + (int(m.group(1)) % 12), half
+    m = re.search(r'บ่าย\s*(\d{1,2})(?!\d)', seg)
+    if m:
+        return 12 + (int(m.group(1)) % 12), half
     m = re.search(r'ตี\s*(\d{1,2})', seg)
     if m:
-        return int(m.group(1)) % 12, 0
+        return int(m.group(1)) % 12, half
     m = re.search(r'(\d{1,2})\s*ทุ่ม', seg)
     if m:
-        return (18 + int(m.group(1))) % 24, 0
+        return (18 + int(m.group(1))) % 24, half
     m = re.search(r'(\d{1,2})\s*โมง', seg)
     if m:
-        return int(m.group(1)) % 12, 0
+        return int(m.group(1)) % 12, half
     if 'เที่ยงคืน' in seg:
         return 0, 0
     if 'เที่ยง' in seg:
@@ -452,11 +493,27 @@ def absolute_reminder_minutes(start_time_str, hh, mm, now):
     except Exception:
         return None
 
+def looks_like_add_reminder(text):
+    # ข้อความนี้ "หน้าตาเหมือนคำสั่งเพิ่มเตือน" ไหม — ใช้เป็นรั้วชั้นสุดท้าย (เพิ่ม 31 ต.ค. 2569 รอบ 5)
+    # เคสจริง r4: "เพิ่มแจ้งเตือนวันนี้ตอนสองทุ่ม" parser อ่านไม่ออกแล้วคืน None ข้อความจึงหลุดไปโหมดสร้างนัด
+    # Gemini เลยสร้างนัดปลอมชื่อ "แจ้งเตือน" เริ่มวันนี้ 20:00 และทับ LAST_EVENT ทำข้อมูลติดต่อตามไปผิดนัด
+    # กฎใหม่: เหมือนคำสั่งเพิ่มเตือนแต่อ่านเวลาไม่ออก = ตอบขอให้พิมพ์ใหม่ ห้ามหลุดไปสร้างนัดเด็ดขาด
+    t = (text or '').strip()
+    if any(v in t for v in QA_CREATE_VERBS):
+        return False
+    if 'เพิ่ม' in t and ('เตือน' in t or 'แจ้ง' in t):
+        return True
+    return 'แจ้งล่วงหน้า' in t or 'เตือนล่วงหน้า' in t
+
 def handle_add_reminder_request(event, msg_text):
     # คืนข้อความตอบกลับ หรือ None ถ้าข้อความนี้ไม่ใช่คำสั่งเพิ่มเวลาเตือน
     minutes = parse_add_reminder_minutes(msg_text)
     clock = parse_absolute_reminder_clock(msg_text)
     if minutes is None and clock is None:
+        if looks_like_add_reminder(msg_text):
+            return ("ขอโทษครับ อ่านเวลาเตือนที่ขอไม่ออกครับ 🙏 ลองพิมพ์แบบนี้ได้เลยครับ "
+                    "เช่น \"เพิ่มแจ้งเตือนล่วงหน้า 1 วัน\" หรือ \"เพิ่มแจ้งเตือนตอน 20:00\" "
+                    "(บอทไม่สร้างนัดใหม่จากประโยคนี้ให้นะครับ)")
         return None
     scope = qa_scope(event)
     now = datetime.now(pytz.timezone('Asia/Bangkok'))
@@ -1106,6 +1163,10 @@ def summarize_plan_from_chat(context):
 
 def add_plan_to_calendar(plan):
     try:
+        plan = dict(plan)
+        plan['title'] = normalize_person_names(plan.get('title', ''))
+        if plan.get('participants'):
+            plan['participants'] = [normalize_person_names(p) for p in plan['participants']]
         service = get_calendar_service()
         tz = pytz.timezone('Asia/Bangkok')
         start_dt = tz.localize(datetime.strptime(f"{plan['date']}T{plan['start_time']}:00", '%Y-%m-%dT%H:%M:%S'))
@@ -1537,7 +1598,7 @@ def handle_text_message(event):
         # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5 หรือจัดการในข้อ 0.7/0.8)
         cal_intent = None if (qa_answer or plan_handled or travel_handled) else parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
-            summary = cal_intent.get("summary", "นัดหมายครอบครัว")
+            summary = normalize_person_names(cal_intent.get("summary", "นัดหมายครอบครัว"))
             start_time = cal_intent.get("start_time")
             reminder_list = cal_intent.get("reminder_minutes", [30])
             if isinstance(reminder_list, (int, float)):
