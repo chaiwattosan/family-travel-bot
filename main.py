@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-10-31-r9 — รอบ 9 (ข้อ 4 เก็บกวาด: ลบโค้ด Bot B ทั้งหมด + แพตช์ get_profile 404)
+# BOT VERSION: 2026-10-31-r11 — รอบ 11 (ข้อ 5: ทักทายเช้าคนแรก + พยากรณ์อากาศ/ฝุ่น เชียงใหม่+อยุธยา + ถามอากาศล่าสุดได้ตลอดวัน)
 import re
 import json
 import time
@@ -814,6 +814,104 @@ def background_calendar_reminder_worker():
 # ไม่งั้นตอนรันใต้ gunicorn บน Render เธรดนี้จะไม่เริ่มทำงานเลย
 reminder_thread = threading.Thread(target=background_calendar_reminder_worker, daemon=True)
 reminder_thread.start()
+
+# ===== ข้อ 5 (รอบ 10): ทักทายเช้าคนแรกของวัน + พยากรณ์อากาศ/ฝุ่นสองบ้าน =====
+# ที่มา: ทุกเช้าคนในบ้านตั้งทองทัก "สวัสดี" กันในกลุ่มเป็นข้อความแรก ๆ ของวันอยู่แล้ว (เช่น อากงทัก 08:05
+# อาหนุ่ยตอบ 08:54 เมื่อ 31 ต.ค. 2569) นายอยากให้บอทใช้จังหวะนั้น — เงื่อนไขของนายคือ "รอข้อความแรกของวัน
+# จากคนจริงก่อน" ไม่ยิง push เองตามเวลา เพราะบ้านนี้ไม่มีเวลาเริ่มวันตายตัวและ push กินโควตารายเดือน
+# บอทจึงใช้ reply (ฟรี) แนบท้ายข้อความเช้าแรกที่ตัวเองไม่ได้ตอบอะไรอยู่แล้ว วันละครั้งเดียวต่อกลุ่ม
+# ข้อมูลอากาศ: Open-Meteo (ฟรี ไม่ต้องใช้ API key) — ⚠️ บทเรียนตอนออกแบบ (เช็กข้อมูลจริง 31 ต.ค.):
+# ค่า us_aqi ดิบจาก API ไม่สอดคล้องกับ PM2.5 ของมันเอง (ฝุ่นสูงสุด 28 µg/m³ แต่ AQI โผล่ 175)
+# จึงรายงาน PM2.5 เป็น µg/m³ ตรง ๆ และจัดระดับด้วยเกณฑ์ไทย ไม่ใช้ค่าดัชนีสำเร็จรูปที่ไม่น่าเชื่อ
+MORNING_GREETED = {'date': None, 'group': None}
+WEATHER_CITIES = [
+    ('เชียงใหม่', 18.7883, 98.9853),
+    ('อยุธยา', 14.3532, 100.5689),
+]
+
+def pm25_level_text(value):
+    # ระดับฝุ่นตามเกณฑ์ไทย (ค่าเฉลี่ย 24 ชม.) — ใช้กับค่าสูงสุดของวันแบบหยาบ ๆ เพื่อคำแนะนำประจำวัน
+    if value <= 25:
+        return 'อากาศดี'
+    if value <= 37.5:
+        return 'ปานกลาง'
+    if value <= 75:
+        return 'เริ่มมีผลต่อสุขภาพ'
+    return 'มีผลต่อสุขภาพ'
+
+def fetch_json_url(url, timeout=8):
+    req = urllib.request.Request(url, headers={'User-Agent': 'family-line-bot'})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode('utf-8'))
+
+def fetch_city_weather(name, lat, lon):
+    # พยากรณ์วันนี้ของเมืองหนึ่ง -> ข้อความสั้น 1–2 บรรทัด; ดึงไม่ได้คืน None (บอทข้ามเมืองนั้นไป)
+    try:
+        base = f"latitude={lat}&longitude={lon}&timezone=Asia%2FBangkok&forecast_days=1"
+        fc = fetch_json_url(f"https://api.open-meteo.com/v1/forecast?{base}&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max")
+        daily = fc.get('daily') or {}
+        tmax = (daily.get('temperature_2m_max') or [None])[0]
+        tmin = (daily.get('temperature_2m_min') or [None])[0]
+        rain = (daily.get('precipitation_probability_max') or [None])[0]
+        if tmax is None or tmin is None:
+            return None
+        line = f"🌡 {name} วันนี้ {tmin:.0f}–{tmax:.0f}°C"
+        if rain is not None:
+            line += f" · โอกาสฝน {rain:.0f}%"
+            if rain >= 60:
+                line += " ☔ พกร่มด้วยนะครับ"
+        try:
+            aq = fetch_json_url(f"https://air-quality-api.open-meteo.com/v1/air-quality?{base}&hourly=pm2_5")
+            pm_values = [v for v in ((aq.get('hourly') or {}).get('pm2_5') or []) if v is not None]
+            if pm_values:
+                pm_max = max(pm_values)
+                line += f"\n   ฝุ่น PM2.5 สูงสุด {pm_max:.0f} µg/m³ ({pm25_level_text(pm_max)})"
+                if pm_max > 37.5:
+                    line += " 😷 ออกนอกบ้านใส่หน้ากากนะครับ"
+        except Exception as e:
+            print(f"Air quality fetch failed for {name}: {e}")
+        return line
+    except Exception as e:
+        print(f"Weather fetch failed for {name}: {e}")
+        return None
+
+WEATHER_KEYWORDS = ('อากาศ', 'พยากรณ์', 'ฝุ่น', 'pm2.5', 'PM2.5')
+WEATHER_QUESTION_CUES = ('ไหม', 'มั้ย', 'เท่าไร', 'เท่าไหร่', 'เป็นไง', 'ยังไง', 'กี่องศา', 'ฝนตก', '?', 'เช็ก', 'เช็ค', 'ดูให้', 'บอกหน่อย')
+
+def is_weather_question(text):
+    # ประตูคำถามอากาศแบบ deterministic (รอบ 11 — นายถามเพิ่มว่า "ถามพยากรณ์ล่าสุดตอนนั้นเลยได้ไหม ไม่ต้องรอรอบเช้า"):
+    # ต้องมีคำเรื่องอากาศ/ฝุ่น และมีสัญญาณคำถาม หรือข้อความสั้นมาก (เช่นพิมพ์แค่ "อากาศ" / "ฝุ่นเชียงใหม่")
+    # บทเรียนที่ระวัง: ประโยคบอกเล่าในวงคุยครอบครัว เช่น "วันนี้อากาศดีจังเลยเนอะ" ต้องไม่โดนบอทแทรกตอบ
+    # ขอบเขตฉบับนี้: ตอบพยากรณ์ "วันนี้" เท่านั้น (พรุ่งนี้ยังไม่อยู่ในประตู จะได้ไม่ตอบผิดวัน)
+    t = (text or '').strip()
+    if not any(k in t for k in WEATHER_KEYWORDS):
+        return False
+    return len(t) <= 10 or any(c in t for c in WEATHER_QUESTION_CUES)
+
+def maybe_morning_greeting(event):
+    # เรียกจากจุดที่แน่ใจว่าบอทยังไม่ได้ใช้ reply token ของข้อความนั้นเท่านั้น (ทุกโฟลว์ที่ตอบแล้วจะ return/ข้ามไปก่อน)
+    # สถานะจำในหน่วยความจำ: ถ้าเครื่องรีสตาร์ตกลางเช้า อาจทักซ้ำได้อีกครั้งในเช้าเดียวกัน — ยอมรับในฉบับแรกนี้
+    try:
+        group_id = getattr(event.source, 'group_id', None)
+        if not group_id or (FAMILY_GROUP_ID and group_id != FAMILY_GROUP_ID):
+            return
+        now = datetime.now(pytz.timezone('Asia/Bangkok'))
+        if not (5 <= now.hour < 11):
+            return
+        today = now.strftime('%Y-%m-%d')
+        if MORNING_GREETED['date'] == today and MORNING_GREETED['group'] == group_id:
+            return
+        lines = ["☀️ สวัสดีตอนเช้าครับทุกคน"]
+        for name, lat, lon in WEATHER_CITIES:
+            w = fetch_city_weather(name, lat, lon)
+            if w:
+                lines.append(w)
+        MORNING_GREETED['date'] = today
+        MORNING_GREETED['group'] = group_id
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(lines)))
+        print(f"Morning greeting sent for {today}")
+    except Exception as e:
+        print(f"Morning greeting error: {e}")
 
 @app.route("/", methods=['GET'])
 def index():
@@ -1894,6 +1992,23 @@ def handle_text_message(event):
             except Exception as e:
                 print(f"Appointment flow error: {e}")
 
+        # 0.87 ถามพยากรณ์อากาศ/ฝุ่น "ล่าสุดตอนนั้น" ได้ตลอดวัน (รอบ 11) — ใช้ตัวดึงอากาศชุดเดียวกับทักทายเช้า
+        # แต่กำกับเวลาที่ถามไว้ในหัวข้อความ กันสับสนว่าเป็นค่าของรอบเช้า; ระบุชื่อเมืองเดียวก็ตอบเมืองนั้นเมืองเดียว
+        if not qa_answer and not plan_handled and not travel_handled and not appt_handled and is_weather_question(msg_text):
+            now_str = datetime.now(pytz.timezone('Asia/Bangkok')).strftime('%H:%M')
+            asked_cities = [c for c in WEATHER_CITIES if c[0] in msg_text] or WEATHER_CITIES
+            wlines = [f"🌤 พยากรณ์ล่าสุด (เวลา {now_str} น.)"]
+            got_weather = False
+            for cname, clat, clon in asked_cities:
+                w = fetch_city_weather(cname, clat, clon)
+                if w:
+                    wlines.append(w)
+                    got_weather = True
+            if not got_weather:
+                wlines = ["ตอนนี้ดึงข้อมูลอากาศไม่ได้ ลองถามอีกครั้งนะครับ 🙏"]
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(wlines)))
+            return
+
         # 0.9 คำสั่งต่อเนื่อง "เพิ่มแจ้งเตือนล่วงหน้า..." สำหรับนัดล่าสุดที่เพิ่งสร้าง (เพิ่ม 30 ต.ค. 2569)
         if not qa_answer and not plan_handled and not travel_handled and not appt_handled:
             try:
@@ -1993,6 +2108,10 @@ def handle_text_message(event):
             except Exception as e:
                 print(f"Error sending admin log: {e}")
 
+        # ข้อ 5: มาถึงจุดนี้แปลว่าข้อความนี้บอทไม่ได้ตอบอะไรเลย (ทุกโฟลว์ที่ตอบจะ return ออกไปก่อน)
+        # ถ้าเป็นข้อความแรกของเช้านี้ในกลุ่มครอบครัว ใช้ reply token ที่ยังว่างอยู่ทักทาย + บอกอากาศ
+        maybe_morning_greeting(event)
+
     except Exception as e:
         print(f"Error handling message: {e}")
 
@@ -2023,6 +2142,7 @@ def handle_image_message(event):
         # (เดิมล็อกเฉพาะกลุ่มที่ group_id ตรง FAMILY_GROUP_ID เป๊ะ ๆ — เทสต์สด 31 ต.ค. นายเทสต์ในแชตที่ group_id
         # ไม่ตรงเงื่อนไขนั้น บอทเลยเงียบสนิททั้งที่ฟังก์ชันสกัดพร้อมทำงาน รอบนี้เปิดทุกแชต (กลุ่ม/เดี่ยว) เพราะ
         # โฟลว์นี้ปลอดภัยในตัวเอง: ต้องผ่าน validation + มีคนพิมพ์ยืนยันก่อนลงปฏิทินเสมอ ร่างผูกกับ scope ของแชตนั้น)
+        slip_replied = False
         try:
             appt_scope = (getattr(event.source, 'group_id', None) or getattr(event.source, 'room_id', None)
                           or getattr(event.source, 'user_id', None))
@@ -2034,11 +2154,16 @@ def handle_image_message(event):
                     PENDING_APPT['expires'] = datetime.now(pytz.timezone('Asia/Bangkok')) + timedelta(minutes=10)
                     PENDING_APPT['group_id'] = appt_scope
                     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=format_appt_draft(appt)))
+                    slip_replied = True
         except Exception as e:
             print(f"Appointment slip extract error: {e}")
 
         # 4) แจ้งแอดมิน (แนบลิงก์รูปให้กดดูได้)
         notify_admin(sender_name, category, f"📷 {summary_text}", thai_time, image_url)
+
+        # ข้อ 5: ถ้ารอบนี้ยังไม่ได้ใช้ reply token (ไม่ได้เสนอร่างใบนัด) ใช้ทักทายเช้าได้
+        if not slip_replied:
+            maybe_morning_greeting(event)
     except Exception as e:
         print(f"Error handling image message: {e}")
 
@@ -2058,6 +2183,8 @@ def handle_sticker_message(event):
 
         append_log_row([thai_time, sender_name, "สติ๊กเกอร์", "-", summary_text, 0, f'=IMAGE("{sticker_url}")', sticker_url])
         notify_admin(sender_name, "สติ๊กเกอร์", f"😊 {summary_text}", thai_time, sticker_url)
+        # ข้อ 5: สติ๊กเกอร์ไม่เคยใช้ reply token เลย เป็นตัวกระตุ้นทักทายเช้าได้เหมือนข้อความคุยเล่น
+        maybe_morning_greeting(event)
     except Exception as e:
         print(f"Error handling sticker message: {e}")
 
