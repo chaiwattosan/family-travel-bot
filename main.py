@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-10-31-r8 — รอบ 8 (แก้สกัดใบนัดจากรูป: กู้ปี พ.ศ. 2 หลัก + เปิดทุกแชต + ทริกเกอร์ภาษาธรรมชาติ + กัน QA แย่ง)
+# BOT VERSION: 2026-10-31-r9 — รอบ 9 (ข้อ 4 เก็บกวาด: ลบโค้ด Bot B ทั้งหมด + แพตช์ get_profile 404)
 import re
 import json
 import time
@@ -47,41 +47,12 @@ TRAIN_PUSH_ENABLED = os.environ.get('TRAIN_PUSH_ENABLED', '0') == '1'
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# ===== Bot B — ช่องสำรองสำหรับ push โดยเฉพาะ (เพิ่ม 23 ต.ค. 2026 ตามการตัดสินใจของนาย) =====
-# ที่มา: โควตา push แผนฟรี (200 ข้อความ/เดือน/ช่อง) ของ Bot A หมดกลางเดือน ต.ค. 2026 จาก [Train] push
-# Bot B = อีก Official Account (โควตาแยกอีก 200/เดือน) — หน้าที่เดียวคือ push แทน A เวลา A เจอ 429
-# B ไม่ตอบแชต ไม่มีโฟลว์ของตัวเอง: webhook ของ B (/callback_b) แค่พิมพ์ Source id ลง log
-# ⚠️ userId/groupId ของ LINE เป็น "รายช่อง" — id ของช่อง B ใช้แทนของ A ไม่ได้ ต้องอ่านจาก log [BotB]
-# แล้วตั้ง env แยก: LINE_B_CHANNEL_ACCESS_TOKEN / LINE_B_CHANNEL_SECRET / FAMILY_GROUP_ID_B / ADMIN_USER_ID_B
-# ไม่ตั้ง env ชุดนี้ = ระบบทำงานแบบเดิมด้วย A ช่องเดียว (failover ปิดเองอัตโนมัติ)
-LINE_B_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_B_CHANNEL_ACCESS_TOKEN')
-LINE_B_CHANNEL_SECRET = os.environ.get('LINE_B_CHANNEL_SECRET')
-FAMILY_GROUP_ID_B = os.environ.get('FAMILY_GROUP_ID_B')
-ADMIN_USER_ID_B = os.environ.get('ADMIN_USER_ID_B')
-line_bot_api_b = LineBotApi(LINE_B_CHANNEL_ACCESS_TOKEN) if LINE_B_CHANNEL_ACCESS_TOKEN else None
-handler_b = WebhookHandler(LINE_B_CHANNEL_SECRET) if LINE_B_CHANNEL_SECRET else None
-
-if handler_b:
-    @handler_b.default()
-    def bot_b_log_only(event):
-        # Bot B ไม่ประมวลผลอะไรเลย — แค่โชว์ id ของช่อง B ใน log ไว้ให้แอดมินเอาไปตั้ง env
-        src = event.source
-        print(f"[BotB] event={event.type} user:{getattr(src, 'user_id', None)} group:{getattr(src, 'group_id', None)} room:{getattr(src, 'room_id', None)}")
-
-def push_with_failover(text, target_a, target_b):
-    # ส่ง push ผ่าน Bot A ก่อน — ถ้าเจอโควตาเต็ม (429) สลับไป Bot B ให้อัตโนมัติ
-    # target_b = id ปลายทางเดียวกันในช่อง B (คนละค่ากับของ A เสมอ) — คืนค่า 'A' / 'B' / None (ส่งไม่ได้ทั้งคู่)
-    try:
-        line_bot_api.push_message(target_a, TextSendMessage(text=text))
-        return 'A'
-    except LineBotApiError as e:
-        if getattr(e, 'status_code', None) != 429:
-            raise
-        print("Push via Bot A hit monthly quota (429) — failing over to Bot B")
-    if line_bot_api_b and target_b:
-        line_bot_api_b.push_message(target_b, TextSendMessage(text=text))
-        return 'B'
-    return None
+# ===== (เก็บกวาดรอบ 9, 31 ต.ค. 2569) โค้ดช่องสำรอง "Bot B" ถูกลบออกทั้งหมดแล้ว =====
+# ที่มาเดิม: ต.ค. 2569 โควตา push ของ Bot A หมดกลางเดือน เลยเคยสร้าง Bot B เป็นอีก Official Account ไว้ push แทนตอน A เจอ 429
+# แต่ข้อเท็จจริงที่ยืนยันจากเอกสาร LINE + เคสจริง 24 ต.ค. 2569: กลุ่มแชท 1 กลุ่มมี Official Account ได้ทีละ 1 ตัวเท่านั้น
+# B จึงเข้ากลุ่มเดียวกับ A ไม่ได้เลย (ค้าง Pending ตลอด) — failover ข้าม OA ในกลุ่มเดียวกันทำไม่ได้โดยโครงสร้าง
+# นายลบ Bot B ทิ้งทั้งหมดตั้งแต่ 24 ต.ค. ระบบเหลือ A ช่องเดียว โค้ดที่เหลืออยู่ (ตัวอ่าน env ของ B, ตัวส่ง failover,
+# webhook ของ B) เป็น dead code ที่ไม่มีวันถูกเรียก จึงเก็บกวาดออกในรอบนี้ เหลือแต่คอมเมนต์นี้ไว้เล่าที่มา
 
 if GEMINI_API_KEY:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -118,14 +89,33 @@ def get_thai_time(timestamp_ms):
     dt = datetime.fromtimestamp(timestamp_ms / 1000.0, tz)
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
-def get_user_display_name(user_id):
-    for attempt in range(3):
+PROFILE_CACHE = {}
+
+def get_user_display_name(user_id, group_id=None):
+    # ชื่อที่แสดงของสมาชิก — ลำดับ: แคชในหน่วยความจำ → โปรไฟล์สมาชิกกลุ่ม → โปรไฟล์เพื่อน → "Unknown User"
+    # เคสจริง 21 ต.ค. 2569 (แพตช์รอบ 9): log มี get_profile ตอบ 404 ซ้ำ ๆ สำหรับสมาชิกอย่างน้อย 1 คน
+    # เพราะสมาชิกกลุ่มไม่จำเป็นต้องแอดบอทเป็น "เพื่อน" — โปรไฟล์เพื่อน (get_profile) จึงไม่มีของคนกลุ่มนี้
+    # วิธีที่ถูก: ขอ "โปรไฟล์สมาชิกกลุ่ม" (get_group_member_profile) ซึ่งใช้ได้กับสมาชิกกลุ่มทุกคน
+    # และเลิก retry 3 รอบแบบเดิม: 404 แปลว่าไม่มีข้อมูล ไม่ใช่เครือข่ายสะดุด ยิ่ง retry ยิ่งช้าและ log รก
+    # แคชชื่อไว้ในหน่วยความจำด้วย (ชื่อแทบไม่เปลี่ยน) ข้อความถัด ๆ ไปของคนเดิมจะไม่ยิง API ซ้ำ
+    if not user_id:
+        return "Unknown User"
+    if user_id in PROFILE_CACHE:
+        return PROFILE_CACHE[user_id]
+    name = None
+    if group_id:
         try:
-            profile = line_bot_api.get_profile(user_id)
-            return profile.display_name
+            name = line_bot_api.get_group_member_profile(group_id, user_id).display_name
         except Exception as e:
-            print(f"Attempt {attempt+1} - Error fetching profile: {e}")
-            time.sleep(1)
+            print(f"Group member profile lookup failed for {user_id}: {e}")
+    if not name:
+        try:
+            name = line_bot_api.get_profile(user_id).display_name
+        except Exception as e:
+            print(f"Profile lookup failed for {user_id}: {e}")
+    if name:
+        PROFILE_CACHE[user_id] = name
+        return name
     return "Unknown User"
 
 def analyze_text_with_gemini(text):
@@ -800,21 +790,20 @@ def background_calendar_reminder_worker():
                             f"🕒 เริ่ม: {start_dt.strftime('%d/%m %H:%M น.')} ({lead})"
                         )
 
-                        # ปลายทางแยกตามช่อง (groupId/userId เป็นรายช่อง ใช้แทนกันไม่ได้):
-                        # ส่งด้วย A ก่อน โควตา A เต็ม (429) ค่อยสลับไป B — ดู push_with_failover
-                        if FAMILY_GROUP_ID:
-                            target_a, target_b = FAMILY_GROUP_ID, FAMILY_GROUP_ID_B
-                        else:
-                            target_a, target_b = ADMIN_USER_ID, ADMIN_USER_ID_B
-                        if target_a:
+                        # ปลายทาง: กลุ่มครอบครัว (หรือแอดมินถ้าไม่ได้ตั้งกลุ่มไว้) — ระบบเหลือ Bot A ช่องเดียว
+                        # (ช่องสำรองถูกลบไปแล้ว ดูคอมเมนต์เก็บกวาดรอบ 9 ต้นไฟล์) ถ้าเจอ 429 = โควตา push
+                        # ของเดือนนั้นหมด ให้บันทึก log ไว้ชัด ๆ ไม่มีการสลับช่องอีก
+                        target = FAMILY_GROUP_ID or ADMIN_USER_ID
+                        if target:
                             try:
-                                used = push_with_failover(alert_text, target_a, target_b)
-                                if used is None:
-                                    print(f"Reminder push not delivered for {key} (Bot A quota exhausted, Bot B unavailable)")
-                                elif used == 'B':
-                                    print(f"Reminder for {key} sent via Bot B")
+                                line_bot_api.push_message(target, TextSendMessage(text=alert_text))
+                            except LineBotApiError as e:
+                                if getattr(e, 'status_code', None) == 429:
+                                    print(f"Reminder push blocked by monthly quota (429) for {key}")
+                                else:
+                                    # push ไม่ผ่านก็ถือว่าพยายามกับ occurrence นี้แล้ว ไม่ retry ซ้ำทุก 60 วิจน log รก
+                                    print(f"Reminder push failed for {key}: {e}")
                             except Exception as e:
-                                # push ไม่ผ่านก็ถือว่าพยายามกับ occurrence นี้แล้ว ไม่ retry ซ้ำทุก 60 วิจน log รก
                                 print(f"Reminder push failed for {key}: {e}")
 
                         notified.add(key)
@@ -830,20 +819,6 @@ reminder_thread.start()
 def index():
     # หน้าเช็กสถานะ: เปิด URL หลักในเบราว์เซอร์ หรือให้ UptimeRobot ping จะได้คำตอบ 200 OK
     return "Family Travel & Kitchen Bot is running!", 200
-
-@app.route("/callback_b", methods=['POST'])
-def callback_b():
-    # Webhook ของ Bot B — ไม่ตอบแชต ประมวลผลอะไรทั้งนั้น (handler_b มีแค่ตัวพิมพ์ log [BotB])
-    # ใช้ตอนติดตั้ง B: แอดมิน add เพื่อน/เชิญ B เข้ากลุ่ม แล้วอ่าน userId/groupId ของช่อง B จาก Render log
-    if not handler_b:
-        return 'Bot B not configured', 200
-    signature = request.headers['X-Line-Signature']
-    body = request.get_data(as_text=True)
-    try:
-        handler_b.handle(body, signature)
-    except InvalidSignatureError:
-        abort(400)
-    return 'OK'
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -1865,7 +1840,7 @@ def handle_text_message(event):
                 )
             return
 
-        sender_name = get_user_display_name(user_id)
+        sender_name = get_user_display_name(user_id, getattr(event.source, 'group_id', None))
         # พิมพ์ source id ลง log — ใช้หา FAMILY_GROUP_ID จาก Render Logs (ส่งข้อความในกลุ่มแล้วดูค่า group:)
         print(f"Source -> user:{user_id} group:{getattr(event.source, 'group_id', None)} room:{getattr(event.source, 'room_id', None)}")
         timestamp = event.timestamp
@@ -2025,7 +2000,7 @@ def handle_text_message(event):
 def handle_image_message(event):
     try:
         user_id = event.source.user_id
-        sender_name = get_user_display_name(user_id)
+        sender_name = get_user_display_name(user_id, getattr(event.source, 'group_id', None))
         thai_time = get_thai_time(event.timestamp)
         print(f"Source -> user:{user_id} group:{getattr(event.source, 'group_id', None)} room:{getattr(event.source, 'room_id', None)}")
 
@@ -2071,7 +2046,7 @@ def handle_image_message(event):
 def handle_sticker_message(event):
     try:
         user_id = event.source.user_id
-        sender_name = get_user_display_name(user_id)
+        sender_name = get_user_display_name(user_id, getattr(event.source, 'group_id', None))
         thai_time = get_thai_time(event.timestamp)
         print(f"Source -> user:{user_id} group:{getattr(event.source, 'group_id', None)} room:{getattr(event.source, 'room_id', None)}")
 
