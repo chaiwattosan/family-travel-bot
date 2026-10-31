@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-10-31-r12 — รอบ 12 (แก้ Open-Meteo 429 บน Render: retry + แคชอากาศ + แหล่งสำรอง wttr.in)
+# BOT VERSION: 2026-10-31-r13 — รอบ 13 (เมนูฟุตบอลไทยลีกแบบ Flex 4 ปุ่มให้อากง: โปรแกรมแข่ง/ผลการแข่ง/ทีมลำพูน/ทีมอยุธยา)
 import re
 import json
 import time
@@ -15,6 +15,7 @@ from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError, LineBotApiError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, ImageMessage, StickerMessage
+from linebot.models import PostbackEvent, FlexSendMessage, BubbleContainer, BoxComponent, TextComponent, ButtonComponent, PostbackAction, SeparatorComponent
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -967,6 +968,177 @@ def maybe_morning_greeting(event):
         print(f"Morning greeting sent for {today}")
     except Exception as e:
         print(f"Morning greeting error: {e}")
+
+# ===== รอบ 13: เมนูฟุตบอลไทยลีก 1 แบบ Flex ให้อากง =====
+# ที่มา: อากงชอบดูบอลมาก เชียร์ 2 ทีมคือ อยุธยา ยูไนเต็ด กับ ลำพูน วอริเออร์ — นายออกแบบเอง (31 ต.ค. 2569):
+# พิมพ์ "ฟุตบอล" → บอทส่งการ์ด Flex มี 4 ปุ่ม (โปรแกรมแข่ง / ผลการแข่ง / ทีมลำพูน / ทีมอยุธยา) กดปุ่มแล้วบอทตอบเป็นข้อความ
+# ปุ่มใช้สัญญาณ postback (ไม่ใช่ข้อความ) เลยต้องมีตัวรับ PostbackEvent แยกต่างหากอยู่ด้านล่างไฟล์
+# แหล่งข้อมูล: FotMob (ลีก id 8984) ดึงครั้งเดียวได้ครบทั้งฤดูกาล 240 นัด พร้อมสกอร์จริง — ตรวจแล้วว่า endpoint
+# ไม่ต้องใช้ key และตอบไว ส่วน TheSportsDB/SofaScore ใช้ไม่ได้ (403 ทั้งคู่จาก IP ฝั่งเซิร์ฟเวอร์)
+# ชั้นความระวังแบบเดียวกับอากาศ: แคช 15 นาที (กันยิงถี่+กันโดนจำกัด) และถ้าดึงไม่ได้ให้ตอบสุภาพ ไม่ทำให้โฟลว์อื่นพัง
+# ขอบเขตฉบับแรกตามที่นายสั่ง "เอาแค่นี้ก่อน": ปุ่มลีก = โปรแกรม/ผล "รอบสัปดาห์นี้" (หน้าต่าง 7 วัน หลุดหน้าต่างใช้รอบแข่งแทน)
+# ส่วนปุ่มทีม = ผลล่าสุด 3 นัด + โปรแกรมถัดไป 3 นัดของทีมนั้น — รออากงใช้จริงแล้วค่อยปรับตามที่เขาอยากได้
+FOOTBALL_LEAGUE_ID = 8984
+FOOTBALL_CACHE = {'ts': None, 'matches': []}
+THAI_TEAM_NAMES = {
+    'Ayutthaya United FC': 'อยุธยา ยูไนเต็ด',
+    'Lamphun Warrior': 'ลำพูน วอริเออร์',
+    'BG Pathum United': 'บีจี ปทุม ยูไนเต็ด',
+    'Bangkok United': 'ทรู แบงค็อก ยูไนเต็ด',
+    'Buriram United': 'บุรีรัมย์ ยูไนเต็ด',
+    'Chiangrai United': 'เชียงราย ยูไนเต็ด',
+    'Chonburi FC': 'ชลบุรี เอฟซี',
+    'Pattani FC': 'ปัตตานี เอฟซี',
+    'Port FC': 'การท่าเรือ เอฟซี',
+    'Thai Port FC': 'การท่าเรือ เอฟซี',
+    'Port MTI FC': 'การท่าเรือ เอฟซี',
+    'Prachuap FC': 'พีที ประจวบ เอฟซี',
+    'PT Prachuap FC': 'พีที ประจวบ เอฟซี',
+    'Rasisalai United': 'ราษีไศล ยูไนเต็ด',
+    'Ratchaburi FC': 'ราชบุรี เอฟซี',
+    'Rayong FC': 'ระยอง เอฟซี',
+    'Sisaket United': 'ศรีสะเกษ ยูไนเต็ด',
+    'Sukhothai FC': 'สุโขทัย เอฟซี',
+    'Uthai Thani FC': 'อุทัยธานี ฟอเรสท์',
+    'Uthai Thani Forest': 'อุทัยธานี ฟอเรสท์',
+}
+FOOTBALL_TEAMS = {
+    'lamphun': ('ลำพูน วอริเออร์', 'Lamphun'),
+    'ayutthaya': ('อยุธยา ยูไนเต็ด', 'Ayutthaya'),
+}
+THAI_WEEKDAYS_SHORT = ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา']
+THAI_MONTHS_SHORT = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+
+def thai_team_name(en_name):
+    return THAI_TEAM_NAMES.get(en_name, en_name)
+
+def fetch_football_matches():
+    # คืน list ของนัดทั้งฤดูกาลในรูป dict เรียบง่าย; แคช 15 นาที; ดึงไม่ได้และไม่มีแคชคืน []
+    now = datetime.now(pytz.timezone('Asia/Bangkok'))
+    if FOOTBALL_CACHE['ts'] and (now - FOOTBALL_CACHE['ts']) < timedelta(minutes=15) and FOOTBALL_CACHE['matches']:
+        return FOOTBALL_CACHE['matches']
+    try:
+        url = f"https://www.fotmob.com/api/data/leagues?id={FOOTBALL_LEAGUE_ID}&season=2026/2027"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        raw = ((data.get('fixtures') or {}).get('allMatches')) or []
+        tz = pytz.timezone('Asia/Bangkok')
+        matches = []
+        for m in raw:
+            status = m.get('status') or {}
+            utc = status.get('utcTime')
+            if not utc:
+                continue
+            try:
+                start = datetime.fromisoformat(utc.replace('Z', '+00:00')).astimezone(tz)
+            except ValueError:
+                continue
+            matches.append({
+                'round': int(m.get('round') or 0),
+                'home': (m.get('home') or {}).get('name', ''),
+                'away': (m.get('away') or {}).get('name', ''),
+                'start': start,
+                'finished': bool(status.get('finished')),
+                'score': status.get('scoreStr') or '',
+            })
+        matches.sort(key=lambda x: x['start'])
+        if matches:
+            FOOTBALL_CACHE['ts'] = now
+            FOOTBALL_CACHE['matches'] = matches
+        return matches
+    except Exception as e:
+        print(f"Football fetch failed: {e}")
+        return FOOTBALL_CACHE['matches']
+
+def fmt_match_time(dt):
+    return f"{THAI_WEEKDAYS_SHORT[dt.weekday()]} {dt.day} {THAI_MONTHS_SHORT[dt.month - 1]} {dt.strftime('%H:%M')}"
+
+def fmt_fixture_line(m):
+    return f"• {fmt_match_time(m['start'])} น. {thai_team_name(m['home'])} vs {thai_team_name(m['away'])}"
+
+def fmt_result_line(m):
+    score = m['score'].replace('-', '–').replace(' ', '')
+    return f"• {thai_team_name(m['home'])} {score} {thai_team_name(m['away'])} ({fmt_match_time(m['start'])})"
+
+def football_fixtures_text():
+    # ปุ่ม "โปรแกรมแข่ง": คู่ที่ยังไม่แข่งภายใน 7 วันข้างหน้า (ทุกทีม) — ถ้าหน้าต่างว่าง (ช่วงพักลีก)
+    # ให้ใช้ "รอบแข่งถัดไป" ทั้งรอบแทน จะได้ไม่ตอบว่าไม่มีโปรแกรมทั้งที่ยังมีแข่ง
+    matches = fetch_football_matches()
+    if not matches:
+        return "ตอนนี้ดึงข้อมูลฟุตบอลไม่ได้ ลองอีกครั้งนะครับ 🙏"
+    now = datetime.now(pytz.timezone('Asia/Bangkok'))
+    upcoming = [m for m in matches if not m['finished'] and m['start'] >= now - timedelta(hours=3)]
+    week = [m for m in upcoming if m['start'] <= now + timedelta(days=7)]
+    if week:
+        chosen, header = week, "⚽ โปรแกรมแข่งไทยลีก 1 สัปดาห์นี้"
+    elif upcoming:
+        next_round = upcoming[0]['round']
+        chosen = [m for m in upcoming if m['round'] == next_round]
+        header = f"⚽ โปรแกรมแข่งไทยลีก 1 นัดที่ {next_round}"
+    else:
+        return "ฤดูกาลนี้แข่งครบทุกนัดแล้วครับ 🏆"
+    lines = [header] + [fmt_fixture_line(m) for m in chosen]
+    return "\n".join(lines)
+
+def football_results_text():
+    # ปุ่ม "ผลการแข่ง": ผลที่จบแล้วภายใน 7 วันที่ผ่านมา — ถ้าไม่มี (ช่วงพัก) ใช้รอบล่าสุดที่มีผลแทน
+    matches = fetch_football_matches()
+    if not matches:
+        return "ตอนนี้ดึงข้อมูลฟุตบอลไม่ได้ ลองอีกครั้งนะครับ 🙏"
+    now = datetime.now(pytz.timezone('Asia/Bangkok'))
+    finished = [m for m in matches if m['finished']]
+    if not finished:
+        return "ยังไม่มีผลการแข่งขันในฤดูกาลนี้ครับ"
+    week = [m for m in finished if m['start'] >= now - timedelta(days=7)]
+    if week:
+        chosen, header = week, "🏁 ผลการแข่งไทยลีก 1 สัปดาห์นี้"
+    else:
+        last_round = finished[-1]['round']
+        chosen = [m for m in finished if m['round'] == last_round]
+        header = f"🏁 ผลการแข่งไทยลีก 1 นัดที่ {last_round}"
+    lines = [header] + [fmt_result_line(m) for m in chosen]
+    return "\n".join(lines)
+
+def football_team_text(team_key):
+    # ปุ่มทีม (ลำพูน/อยุธยา): ผลล่าสุด 3 นัด + โปรแกรมถัดไป 3 นัดของทีมนั้น
+    label, needle = FOOTBALL_TEAMS[team_key]
+    matches = fetch_football_matches()
+    if not matches:
+        return "ตอนนี้ดึงข้อมูลฟุตบอลไม่ได้ ลองอีกครั้งนะครับ 🙏"
+    mine = [m for m in matches if needle in m['home'] or needle in m['away']]
+    past = [m for m in mine if m['finished']][-3:]
+    nxt = [m for m in mine if not m['finished']][:3]
+    lines = [f"⚽ {label}"]
+    if past:
+        lines.append("ผลล่าสุด:")
+        lines += [fmt_result_line(m) for m in past]
+    if nxt:
+        lines.append("โปรแกรมถัดไป:")
+        lines += [fmt_fixture_line(m) for m in nxt]
+    if not past and not nxt:
+        lines.append("ยังไม่มีข้อมูลของทีมนี้ในฤดูกาลนี้ครับ")
+    return "\n".join(lines)
+
+def build_football_menu_flex():
+    # การ์ด Flex 4 ปุ่มตามที่นายออกแบบ — ปุ่มส่ง postback กลับมาที่ตัวรับ PostbackEvent
+    # (ข้อความในการ์ดต้องมี alt_text เสมอ ไม่งั้น LINE ปฏิเสธข้อความ Flex ทั้งอัน)
+    def menu_button(label, data, color):
+        return ButtonComponent(
+            action=PostbackAction(label=label, data=data, display_text=label),
+            style='primary', color=color, height='sm',
+        )
+    body = BoxComponent(layout='vertical', spacing='md', contents=[
+        TextComponent(text='⚽ ฟุตบอลไทยลีก 1', weight='bold', size='lg'),
+        TextComponent(text='เลือกดูข้อมูลได้เลยครับ', size='sm', color='#666666'),
+        SeparatorComponent(),
+        menu_button('📅 โปรแกรมแข่ง', 'football:fixtures', '#1DB446'),
+        menu_button('🏁 ผลการแข่ง', 'football:results', '#1DB446'),
+        menu_button('🐂 ทีมลำพูน วอริเออร์', 'football:lamphun', '#0B6E4F'),
+        menu_button('⚔️ ทีมอยุธยา ยูไนเต็ด', 'football:ayutthaya', '#0B6E4F'),
+    ])
+    bubble = BubbleContainer(body=body)
+    return FlexSendMessage(alt_text='เมนูฟุตบอลไทยลีก 1', contents=bubble)
 
 @app.route("/", methods=['GET'])
 def index():
@@ -1999,6 +2171,13 @@ def handle_text_message(event):
         timestamp = event.timestamp
         thai_time = get_thai_time(timestamp)
 
+        # 0.45 เมนูฟุตบอลไทยลีก (รอบ 13): พิมพ์ "ฟุตบอล" หรือ "บอล" สั้น ๆ -> ส่งการ์ด Flex 4 ปุ่มให้กดเลือก
+        # วางไว้ก่อน QA เพราะนี่คือการ์ดเมนู ไม่ใช่คำถามตาราง — เงื่อนไขเป็นคำสั้น ๆ ตรงตัวเท่านั้น
+        # กันบอทแทรกกลางประโยคคุยเรื่องบอลทั่วไปของครอบครัว (เช่น "วันนี้บอลแข่งกี่โมง" จะไม่โดนอันนี้)
+        if msg_text.strip() in ('ฟุตบอล', 'บอล', 'เมนูฟุตบอล', 'ดูบอล'):
+            line_bot_api.reply_message(event.reply_token, build_football_menu_flex())
+            return
+
         # 0.5 ถาม-ตอบตารางนัด/วันพระ: ถ้าเป็นคำถามเรื่องตาราง ให้ตอบจากปฏิทินจริงก่อน
         # (ตอบแล้วข้ามโหมดสร้างนัด แต่ยังไหลไปบันทึก log + แจ้งแอดมินตามปกติ)
         qa_answer = None
@@ -2242,6 +2421,28 @@ def handle_sticker_message(event):
         maybe_morning_greeting(event)
     except Exception as e:
         print(f"Error handling sticker message: {e}")
+
+@handler.add(PostbackEvent)
+def handle_postback(event):
+    # ตัวรับสัญญาณ "ปุ่มกด" (postback) — เกิดใหม่พร้อมเมนูฟุตบอลรอบ 13 (ก่อนหน้านี้บอทไม่เคยใช้ปุ่มเลย)
+    # ปุ่มแต่ละปุ่มฝังค่า data ไว้ตอนสร้างการ์ด (เช่น football:fixtures) พอกด LINE จะส่งค่านั้นกลับมาที่นี่
+    # ชุดปุ่มในอนาคตให้เพิ่มแขนงโดยดูคำขึ้นต้นของ data เป็นหลัก จะได้ไม่ชนกัน
+    try:
+        data = (event.postback.data or '') if getattr(event, 'postback', None) else ''
+        print(f"Postback received: {data}")
+        if data.startswith('football:'):
+            mode = data.split(':', 1)[1]
+            if mode == 'fixtures':
+                text = football_fixtures_text()
+            elif mode == 'results':
+                text = football_results_text()
+            elif mode in FOOTBALL_TEAMS:
+                text = football_team_text(mode)
+            else:
+                return
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=text))
+    except Exception as e:
+        print(f"Postback handling error: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
