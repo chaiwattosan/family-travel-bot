@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-10-31-r7 — รอบ 7 (ข้อ 3 + ความหมายเรื่องเวลาของบ้านนี้: นัด รพ. เน้นเตือนล่วงหน้า 1 วัน/ไม่มีเวลา=08:00, บอทถามเวลาออกบ้านหลังสร้างนัด)
+# BOT VERSION: 2026-10-31-r8 — รอบ 8 (แก้สกัดใบนัดจากรูป: กู้ปี พ.ศ. 2 หลัก + เปิดทุกแชต + ทริกเกอร์ภาษาธรรมชาติ + กัน QA แย่ง)
 import re
 import json
 import time
@@ -875,6 +875,10 @@ def is_schedule_question(text):
     # มีคำสั่งสร้างนัดชัด ๆ → ไม่แย่ง ให้ไหลไปโหมดสร้างนัดตามเดิม
     if any(v in t for v in QA_CREATE_VERBS):
         return False
+    # คำสั่งถอดใบนัดจากรูป (ขั้น 0.85) มีโฟลว์ของตัวเอง → ไม่แย่ง (เคสเทสต์สด 31 ต.ค.: "ช่วยทำนัดหมายจากรูปได้ไหม"
+    # มีคำว่า นัด+ได้ไหม เลยโดน QA ตอบเป็นรายการนัดทั้งสัปดาห์แทนที่จะไปถอดรูป)
+    if any(tr in t for tr in APPT_TRIGGERS):
+        return False
     # ข้อความประกาศให้สมาชิกส่งข้อมูล ไม่ใช่คำถามถึงบอท
     if any(c in t for c in QA_ANNOUNCE_CUES):
         return False
@@ -896,7 +900,7 @@ def is_image_summary_request(text):
     t = text.strip()
     if any(w in t for w in ['เที่ยวบิน', 'ตั๋ว', 'ไฟลต์']):
         return False
-    if any(w in t for w in ['ใบนัด', 'นัดจากรูป']):
+    if any(w in t for w in ['ใบนัด', 'นัดจากรูป', 'นัดหมายจากรูป']):
         return False  # งานถอดรูปใบนัด (ขั้น 0.85) มีโฟลว์ของตัวเองเหมือนเที่ยวบิน
     return ('สรุป' in t or 'อ่าน' in t) and any(w in t for w in ['รูป', 'ภาพ'])
 
@@ -1628,7 +1632,8 @@ def handle_travel_flow(event, msg_text):
 # → คนพิมพ์ยืนยันก่อนเสมอ บอทไม่มีสิทธิ์ลงปฏิทินเองจากรูป (หลักเดียวกับโหมดสรุปนัด/เที่ยวบิน)
 # รูปที่ไม่ผ่าน validation (รูปอาหาร/รูปทั่วไป) จะเงียบสนิท ไหลไป log ตามเดิม ไม่เสนอร่างกวนกลุ่ม
 PENDING_APPT = {'data': None, 'expires': None, 'group_id': None}
-APPT_TRIGGERS = ['ลงนัดจากรูป', 'สรุปใบนัด', 'อ่านใบนัด', 'ลงใบนัด', 'สรุปนัดจากรูป']
+APPT_TRIGGERS = ['ลงนัดจากรูป', 'สรุปใบนัด', 'อ่านใบนัด', 'ลงใบนัด', 'สรุปนัดจากรูป',
+                 'ทำนัดจากรูป', 'ทำนัดหมายจากรูป', 'แกะนัดจากรูป', 'นัดหมายจากรูป', 'นัดจากรูป']
 APPT_DEFAULT_TIME = '08:00'  # ใบนัด รพ. บางใบมีแค่วันไม่มีเวลา — บ้านนี้ออกบ้านไป รพ. กัน 7:00 ไม่เกิน 08:00
 # จึงตั้ง 08:00 เป็นค่าตั้งต้น (นายอธิบาย 31 ต.ค.: นัด รพ. เน้น "แจ้งเตือนล่วงหน้า 1 วัน" มากกว่าเวลาเป๊ะ ๆ)
 # และบอกในร่างชัด ๆ ว่าเป็นค่าตั้งต้น ไม่เงียบใส่เอง
@@ -1644,7 +1649,19 @@ def validate_appointment(data):
         if d.year > 2400:  # AI ส่งปี พ.ศ. หลุดมา → แปลงเป็น ค.ศ.
             d = d.replace(year=d.year - 543)
         if not (today - timedelta(days=1) <= d <= today + timedelta(days=370)):
-            return None
+            # กู้กรณี AI อ่านปี พ.ศ. แบบ 2 หลักในใบนัด ("12 พ.ย. 69") เป็น ค.ศ. 2069 (เคสเทสต์สด r7 31 ต.ค.:
+            # ใบนัดอากงใบจริงโดนเงียบ เพราะวันที่หลุดออกนอกช่วงตรวจ) — เลข 2 หลัก "69" คือ พ.ศ. 2569 = ค.ศ. 2026
+            # สูตรกู้: ปี ค.ศ. = (เลข 2 หลักท้าย) + 1957 จากนั้นเช็กช่วงอีกครั้ง ไม่เข้าช่วงก็ปฏิเสธตามเดิม
+            d2 = None
+            if 2000 <= d.year <= 2099:
+                try:
+                    d2 = d.replace(year=(d.year % 100) + 1957)
+                except ValueError:
+                    d2 = None
+            if d2 and (today - timedelta(days=1) <= d2 <= today + timedelta(days=370)):
+                d = d2
+            else:
+                return None
         raw_time = data.get('time')
         time_is_default = False
         if raw_time:
@@ -1692,6 +1709,8 @@ def extract_appointment_from_image(image_bytes):
 กฎสำคัญ:
 - ถ้ารูปไม่ใช่ใบนัดหมายทางการแพทย์เลย ให้ตอบ {{"is_appointment": false}} เท่านั้น
 - วันที่: ตอบเป็นปีคริสต์ศักราชรูปแบบ YYYY-MM-DD เสมอ — ถ้าในรูปเป็นปีพุทธศักราช (เช่น 2569) ให้ลบ 543 ก่อน (2569 → 2026) ถ้าระบุเป็นชื่อเดือนภาษาไทยหรือวันในสัปดาห์ ให้แปลงเป็นวันที่จริงโดยเทียบกับวันนี้ ({today_str})
+- ปีในเอกสารไทยอาจเป็นเลข 2 หลัก เช่น "12 พ.ย. 69" หมายถึง พ.ศ. 2569 ให้ตอบ 2026-11-12 (ห้ามตอบปี 2069)
+- รูปอาจเป็นภาพถ่ายจอมือถือหรือแคปหน้าจอที่มีแถบเมนู/ปุ่มของแอปปนอยู่ ให้สนใจเฉพาะเนื้อหาใบนัดในการ์ด/เอกสารในรูป
 - เวลา: รูปแบบ HH:MM (24 ชั่วโมง) ถ้าในรูปไม่มีเวลา ให้ใส่ null ห้ามเดา
 - ชื่อผู้ป่วย: คัดลอกตามที่พิมพ์ในเอกสาร
 - ห้องตรวจ/เลขคิว/การเตรียมตัว/หมายเหตุอื่น: ใส่รวมใน note
@@ -2025,16 +2044,20 @@ def handle_image_message(event):
         image_formula = f'=IMAGE("{image_url}")' if image_url else ""
         append_log_row([thai_time, sender_name, category, "-", summary_text, 0, image_formula, image_url or ""])
 
-        # 3.5) โหมดใบนัด: รูปที่ส่งเข้า "กลุ่มครอบครัว" ลองสกัดใบนัด — ผ่าน validation เข้มเท่านั้นถึงเสนอร่างในกลุ่ม
-        # (รูปทั่วไปจะไม่ผ่านและเงียบไปตามเดิม; รูปในแชต 1-1 กับแอดมินไม่เข้าโฟลว์นี้)
+        # 3.5) โหมดใบนัด: รูปที่ส่งเข้ามา ลองสกัดใบนัด — ผ่าน validation เข้มเท่านั้นถึงเสนอร่าง
+        # (เดิมล็อกเฉพาะกลุ่มที่ group_id ตรง FAMILY_GROUP_ID เป๊ะ ๆ — เทสต์สด 31 ต.ค. นายเทสต์ในแชตที่ group_id
+        # ไม่ตรงเงื่อนไขนั้น บอทเลยเงียบสนิททั้งที่ฟังก์ชันสกัดพร้อมทำงาน รอบนี้เปิดทุกแชต (กลุ่ม/เดี่ยว) เพราะ
+        # โฟลว์นี้ปลอดภัยในตัวเอง: ต้องผ่าน validation + มีคนพิมพ์ยืนยันก่อนลงปฏิทินเสมอ ร่างผูกกับ scope ของแชตนั้น)
         try:
-            gid = getattr(event.source, 'group_id', None)
-            if gid and FAMILY_GROUP_ID and gid == FAMILY_GROUP_ID:
+            appt_scope = (getattr(event.source, 'group_id', None) or getattr(event.source, 'room_id', None)
+                          or getattr(event.source, 'user_id', None))
+            if appt_scope:
                 appt = extract_appointment_from_image(image_bytes)
+                print(f"Appointment extract: is_appointment={bool(appt and appt.get('is_appointment'))}")
                 if appt and appt.get('is_appointment'):
                     PENDING_APPT['data'] = appt
                     PENDING_APPT['expires'] = datetime.now(pytz.timezone('Asia/Bangkok')) + timedelta(minutes=10)
-                    PENDING_APPT['group_id'] = gid
+                    PENDING_APPT['group_id'] = appt_scope
                     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=format_appt_draft(appt)))
         except Exception as e:
             print(f"Appointment slip extract error: {e}")
