@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-10-31-r11 — รอบ 11 (ข้อ 5: ทักทายเช้าคนแรก + พยากรณ์อากาศ/ฝุ่น เชียงใหม่+อยุธยา + ถามอากาศล่าสุดได้ตลอดวัน)
+# BOT VERSION: 2026-10-31-r12 — รอบ 12 (แก้ Open-Meteo 429 บน Render: retry + แคชอากาศ + แหล่งสำรอง wttr.in)
 import re
 import json
 import time
@@ -840,12 +840,24 @@ def pm25_level_text(value):
     return 'มีผลต่อสุขภาพ'
 
 def fetch_json_url(url, timeout=8):
-    req = urllib.request.Request(url, headers={'User-Agent': 'family-line-bot'})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode('utf-8'))
+    # เคสจริงรอบ 12 (31 ต.ค. 2569): Open-Meteo ตอบ 429 ตั้งแต่คำขอแรกของวันบน Render — ไม่ใช่บอทยิงถี่
+    # แต่ IP ขาออกของ Render free เป็น IP ร่วมของ datacenter ที่ผู้เช่ารายอื่นใช้โควตาต่อ IP จนเต็ม (บทเรียน
+    # เดียวกับ YouTube จาก IP datacenter ที่โดนบล็อก) มาตรการในชั้นนี้: เจอ 429 ให้รอ 3 วิแล้วลองซ้ำ 1 ครั้ง
+    for attempt in range(2):
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'family-line-bot'})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt == 0:
+                time.sleep(3)
+                continue
+            raise
 
-def fetch_city_weather(name, lat, lon):
-    # พยากรณ์วันนี้ของเมืองหนึ่ง -> ข้อความสั้น 1–2 บรรทัด; ดึงไม่ได้คืน None (บอทข้ามเมืองนั้นไป)
+WEATHER_CACHE = {}
+
+def _weather_from_open_meteo(name, lat, lon):
+    # แหล่งหลัก: Open-Meteo — มีครบ อุณหภูมิ/ฝน/PM2.5
     try:
         base = f"latitude={lat}&longitude={lon}&timezone=Asia%2FBangkok&forecast_days=1"
         fc = fetch_json_url(f"https://api.open-meteo.com/v1/forecast?{base}&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max")
@@ -874,6 +886,49 @@ def fetch_city_weather(name, lat, lon):
     except Exception as e:
         print(f"Weather fetch failed for {name}: {e}")
         return None
+
+def _weather_from_wttr(name, lat, lon):
+    # แหล่งสำรอง: wttr.in (คนละโครงสร้างพื้นฐานกับ Open-Meteo โอกาสโดนบล็อกพร้อมกันต่ำ)
+    # ข้อจำกัด: แหล่งนี้ไม่มีข้อมูลฝุ่น — ข้อความสำรองจึงมีเฉพาะอุณหภูมิกับฝน ไม่มีบรรทัด PM2.5
+    try:
+        data = fetch_json_url(f"https://wttr.in/{lat},{lon}?format=j1")
+        days = data.get('weather') or []
+        if not days:
+            return None
+        today = days[0]
+        tmax = float(today['maxtempC'])
+        tmin = float(today['mintempC'])
+        line = f"🌡 {name} วันนี้ {tmin:.0f}–{tmax:.0f}°C"
+        rains = []
+        for h in today.get('hourly') or []:
+            try:
+                rains.append(int(h.get('chanceofrain') or 0))
+            except (TypeError, ValueError):
+                pass
+        if rains:
+            line += f" · โอกาสฝน {max(rains)}%"
+            if max(rains) >= 60:
+                line += " ☔ พกร่มด้วยนะครับ"
+        return line
+    except Exception as e:
+        print(f"wttr.in fetch failed for {name}: {e}")
+        return None
+
+def fetch_city_weather(name, lat, lon):
+    # จุดเรียกเดียวของทั้งทักทายเช้าและถามอากาศระหว่างวัน — ชั้นแคช + สลับแหล่ง (รอบ 12 จากเคส 429 บน Render):
+    # แคช 60 นาทีทำให้คำถามซ้ำ ๆ ไม่ยิง API เลย และถ้าทุกแหล่งล่มพร้อมกัน ให้ใช้ค่าแคชเก่าของวันนั้นแทนตอบว่าไม่มีข้อมูล
+    now = datetime.now(pytz.timezone('Asia/Bangkok'))
+    cached = WEATHER_CACHE.get(name)
+    if cached and (now - cached['ts']) < timedelta(minutes=60):
+        return cached['text']
+    text = _weather_from_open_meteo(name, lat, lon) or _weather_from_wttr(name, lat, lon)
+    if text:
+        WEATHER_CACHE[name] = {'text': text, 'ts': now}
+        return text
+    if cached:
+        print(f"Weather sources down for {name} — serving stale cache from {cached['ts']}")
+        return cached['text']
+    return None
 
 WEATHER_KEYWORDS = ('อากาศ', 'พยากรณ์', 'ฝุ่น', 'pm2.5', 'PM2.5')
 WEATHER_QUESTION_CUES = ('ไหม', 'มั้ย', 'เท่าไร', 'เท่าไหร่', 'เป็นไง', 'ยังไง', 'กี่องศา', 'ฝนตก', '?', 'เช็ก', 'เช็ค', 'ดูให้', 'บอกหน่อย')
