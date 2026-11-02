@@ -1075,7 +1075,7 @@ def maybe_morning_greeting(event):
 # ขอบเขตฉบับแรกตามที่นายสั่ง "เอาแค่นี้ก่อน": ปุ่มลีก = โปรแกรม/ผล "รอบสัปดาห์นี้" (หน้าต่าง 7 วัน หลุดหน้าต่างใช้รอบแข่งแทน)
 # ส่วนปุ่มทีม = ผลล่าสุด 3 นัด + โปรแกรมถัดไป 3 นัดของทีมนั้น — รออากงใช้จริงแล้วค่อยปรับตามที่เขาอยากได้
 FOOTBALL_LEAGUE_ID = 8984
-FOOTBALL_CACHE = {'ts': None, 'matches': []}
+FOOTBALL_CACHE = {'ts': None, 'matches': [], 'table': []}
 THAI_TEAM_NAMES = {
     'Ayutthaya United FC': 'อยุธยา ยูไนเต็ด',
     'Lamphun Warrior': 'ลำพูน วอริเออร์',
@@ -1139,6 +1139,30 @@ def fetch_football_matches():
                 'score': status.get('scoreStr') or '',
             })
         matches.sort(key=lambda x: x['start'])
+        # รอบ 16: ตารางคะแนนอยู่ใน payload เดียวกันนี้อยู่แล้ว (data['table']) ไม่ต้องยิง API เพิ่ม —
+        # แยก try ของตัวเองไว้ ถ้าฟอร์แมตตารางเปลี่ยน แมตช์ยังทำงานต่อได้ตามเดิม
+        try:
+            groups = data.get('table') or []
+            rows = []
+            if groups:
+                all_rows = (((groups[0].get('data') or {}).get('table') or {}).get('all')) or []
+                for r in all_rows:
+                    rows.append({
+                        'pos': int(r.get('idx') or 0),
+                        'name': r.get('name', ''),
+                        'played': int(r.get('played') or 0),
+                        'wins': int(r.get('wins') or 0),
+                        'draws': int(r.get('draws') or 0),
+                        'losses': int(r.get('losses') or 0),
+                        'scores': r.get('scoresStr') or '',
+                        'gd': int(r.get('goalConDiff') or 0),
+                        'pts': int(r.get('pts') or 0),
+                    })
+                rows.sort(key=lambda x: x['pos'])
+            if rows:
+                FOOTBALL_CACHE['table'] = rows
+        except Exception as e:
+            print(f"Football table parse failed: {e}")
         if matches:
             FOOTBALL_CACHE['ts'] = now
             FOOTBALL_CACHE['matches'] = matches
@@ -1216,8 +1240,37 @@ def football_team_text(team_key):
         lines.append("ยังไม่มีข้อมูลของทีมนี้ในฤดูกาลนี้ครับ")
     return "\n".join(lines)
 
+def fetch_football_table():
+    # ตารางคะแนนล่าสุด — ตัวดึงแมตช์ด้านบนพ่วงตารางจาก payload เดียวกันมาใส่แคชไว้แล้ว
+    # เรียก fetch_football_matches() ก่อนเสมอเพื่อกระตุ้น/ใช้แคชชุดเดียวกัน (แคช 15 นาที)
+    fetch_football_matches()
+    return FOOTBALL_CACHE.get('table') or []
+
+def football_table_text():
+    # ปุ่ม "อันดับตาราง" (รอบ 16 — นายขอเพิ่ม 2 พ.ย. 2569 เอาใจอากง หลังเมื่อวาน (1 พ.ย.) ทีมที่อากงเชียร์
+    # ชนะทั้งคู่: อยุธยาบุกชนะสุโขทัย 0–3, ลำพูนบุกชนะระยอง 0–4 อันดับของสองทีมขยับขึ้นชัดเจน —
+    # อยุธยาขึ้นที่ 3 (13 แต้ม), ลำพูนที่ 8 (10 แต้ม) จากข้อมูล FotMob ณ เช้า 2 พ.ย.)
+    # รูปแบบบรรทัด: อันดับ + ชื่อทีมไทย + แต้มเป็นตัวหลัก อ่านง่ายบนมือถือ ส่วนแข่ง/ชนะ-เสมอ-แพ้/ประตู
+    # ใส่ย่อไว้ท้ายบรรทัดเดียวกัน; สองทีมของอากงติดสัญลักษณ์เดียวกับปุ่มทีมในการ์ด (⚔️/🐂) ให้กวาดตาเจอไว
+    rows = fetch_football_table()
+    if not rows:
+        return "ตอนนี้ดึงอันดับตารางไม่ได้ ลองอีกครั้งนะครับ 🙏"
+    lines = ["📊 อันดับตารางไทยลีก 1 (ล่าสุด)"]
+    for r in rows:
+        mark = ''
+        if 'Ayutthaya' in r['name']:
+            mark = ' ⚔️'
+        elif 'Lamphun' in r['name']:
+            mark = ' 🐂'
+        lines.append(
+            f"{r['pos']}. {thai_team_name(r['name'])}{mark} — {r['pts']} แต้ม "
+            f"(แข่ง {r['played']}, ช{r['wins']} ส{r['draws']} พ{r['losses']}, ประตู {r['scores']}, ผลต่าง {r['gd']:+d})"
+        )
+    return "\n".join(lines)
+
 def build_football_menu_flex():
-    # การ์ด Flex 4 ปุ่มตามที่นายออกแบบ — ปุ่มส่ง postback กลับมาที่ตัวรับ PostbackEvent
+    # การ์ด Flex ปุ่มตามที่นายออกแบบ (รอบ 13 = 4 ปุ่ม, รอบ 16 เพิ่มปุ่มที่ 5 "อันดับตาราง") —
+    # ปุ่มส่ง postback กลับมาที่ตัวรับ PostbackEvent
     # (ข้อความในการ์ดต้องมี alt_text เสมอ ไม่งั้น LINE ปฏิเสธข้อความ Flex ทั้งอัน)
     def menu_button(label, data, color):
         return ButtonComponent(
@@ -1230,6 +1283,7 @@ def build_football_menu_flex():
         SeparatorComponent(),
         menu_button('📅 โปรแกรมแข่ง', 'football:fixtures', '#1DB446'),
         menu_button('🏁 ผลการแข่ง', 'football:results', '#1DB446'),
+        menu_button('📊 อันดับตาราง', 'football:table', '#1DB446'),
         menu_button('🐂 ทีมลำพูน วอริเออร์', 'football:lamphun', '#0B6E4F'),
         menu_button('⚔️ ทีมอยุธยา ยูไนเต็ด', 'football:ayutthaya', '#0B6E4F'),
     ])
@@ -2274,6 +2328,14 @@ def handle_text_message(event):
             line_bot_api.reply_message(event.reply_token, build_football_menu_flex())
             return
 
+        # รอบ 16: พิมพ์ "อันดับตาราง" ตรง ๆ = ตอบตารางคะแนนเลย ไม่ต้องผ่านการ์ด
+        # ต้องวางไว้ตรงนี้ (ก่อนขั้น 0.5 QA) เพราะคำว่า "ตาราง" เป็นคีย์เวิร์ดของโหมดถาม-ตอบตารางนัด —
+        # ถ้าหลุดไปถึง QA บอทจะตอบเรื่องนัดหมายแทนอันดับฟุตบอล (เงื่อนไขตรงตัวสั้น ๆ แบบเดียวกับเมนูบอล
+        # ประโยคคุยทั่วไปที่มีคำว่าอันดับตารางปนอยู่จะไม่โดนอันนี้)
+        if msg_text.strip() in ('อันดับตาราง', 'ตารางคะแนน', 'อันดับบอล', 'ตารางบอล'):
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=football_table_text()))
+            return
+
         # 0.5 ถาม-ตอบตารางนัด/วันพระ: ถ้าเป็นคำถามเรื่องตาราง ให้ตอบจากปฏิทินจริงก่อน
         # (ตอบแล้วข้ามโหมดสร้างนัด แต่ยังไหลไปบันทึก log + แจ้งแอดมินตามปกติ)
         qa_answer = None
@@ -2532,6 +2594,8 @@ def handle_postback(event):
                 text = football_fixtures_text()
             elif mode == 'results':
                 text = football_results_text()
+            elif mode == 'table':
+                text = football_table_text()
             elif mode in FOOTBALL_TEAMS:
                 text = football_team_text(mode)
             else:
