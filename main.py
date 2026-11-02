@@ -771,8 +771,24 @@ def background_calendar_reminder_worker():
 
                 for minutes in offsets:
                     fire_time = start_dt - timedelta(minutes=minutes)
-                    # ยิงเมื่อถึงเวลาเตือน (เผื่อย้อนหลังตาม grace — 5 นาทีปกติ, 15 นาทีเฉพาะรอบแรกหลังรีสตาร์ต)
-                    if reminder_due(fire_time, now, grace):
+                    # หน้าต่างยิง: ฐานคือ grace (5 นาทีปกติ, 15 นาทีรอบแรกหลังรีสตาร์ต) แต่เตือนที่ล่วงหน้านาน
+                    # ต้องมีหน้าต่างตามเก็บ (catch-up) ยาวกว่านั้น — เคสจริง 2 พ.ย. 2569: เตือนวันพระล่วงหน้า
+                    # 1 วัน กำหนดยิง 06:30 ไม่เข้ากลุ่มเลย (ปฏิทินเด้งเตือนนายเองตามปกติ ตัวอีเวนต์ตั้งเตือน
+                    # 1440 นาทีถูกต้อง) สาเหตุที่เข้ากันได้กับหลักฐานที่สุดคือ worker/process ไม่ได้ทำงานใน
+                    # หน้าต่างแคบ 06:30–06:35 (Render free หลับ/รีสตาร์ต) และโค้ดเดิมไม่มีการตามเก็บ —
+                    # เลยเวลาหน้าต่างปุ๊บ เตือนนั้นหายเงียบถาวร ทั้งที่ส่งช้าไปหลายชั่วโมงก็ยังมีประโยชน์
+                    # (วันพระ: ยังซื้อดอกไม้ทันภายในวันเดียวกัน) จึงขยาย: เตือน ≥1 วัน → ตามเก็บ 12 ชม.
+                    # (ยังเหลือเวลาก่อนอีเวนต์จริงอีก 12 ชม.), เตือน ≥3 ชม. → 60 นาที, อื่น ๆ → อย่างน้อย 15 นาที
+                    # ข้อแลกเปลี่ยนที่ยอมรับ: ถ้า process รีสตาร์ตภายในหน้าต่างตามเก็บหลังส่งไปแล้ว อาจส่งซ้ำ
+                    # 1 ครั้ง เพราะ notified จำในหน่วยความจำ (แบบเดียวกับทักทายเช้ารอบ 10)
+                    window = grace
+                    if minutes >= 1440:
+                        window = max(window, 12 * 60)
+                    elif minutes >= 180:
+                        window = max(window, 60)
+                    else:
+                        window = max(window, 15)
+                    if reminder_due(fire_time, now, window):
                         key = f"{event['id']}|{start_str}|{minutes}"
                         if key in notified:
                             continue
@@ -944,6 +960,31 @@ def is_weather_question(text):
         return False
     return len(t) <= 10 or any(c in t for c in WEATHER_QUESTION_CUES)
 
+def tomorrow_wan_phra_line(now):
+    # วงสำรองของเตือนวันพระ (รอบ 14 — จากเคสจริง 2 พ.ย. 2569 ที่ push เตือนล่วงหน้า 1 วันหลุดเงียบ ๆ
+    # ตามรายละเอียดในตัวเตือนด้านบน): ทักทายเช้าใช้ reply ซึ่งพิสูจน์แล้วว่าเข้ากลุ่มชัวร์ทุกเช้าที่มีคนทัก
+    # (เช้า 2 พ.ย. อากงทัก 06:41 บอทตอบทันที) ถ้าพรุ่งนี้เป็นวันพระ ให้แนบบรรทัดเตือนซื้อดอกไม้ไปกับ
+    # ทักทายเช้าของวันนี้เลย — ช้ากว่า push 06:30 นิดหน่อยแต่ไม่หลุด และอาหนุ่ยเห็นตอนเช้าทันเตรียมของ
+    # อ่านปฏิทินวันพรุ่งนี้อย่างเดียว คืน None เมื่อไม่ใช่วันพระ/อ่านไม่ได้ (ห้ามทำให้ทักทายเช้าพัง)
+    try:
+        service = get_calendar_service()
+        day_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        res = service.events().list(
+            calendarId=FAMILY_CALENDAR_ID,
+            timeMin=day_start.isoformat(),
+            timeMax=day_end.isoformat(),
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        for e in res.get('items', []):
+            if 'วันพระ' in (e.get('summary') or ''):
+                return "🙏 พรุ่งนี้วันพระนะครับ — เตรียมดอกไม้/ของไหว้ไว้ได้เลยครับ"
+        return None
+    except Exception as e:
+        print(f"Tomorrow wan phra check failed: {e}")
+        return None
+
 def maybe_morning_greeting(event):
     # เรียกจากจุดที่แน่ใจว่าบอทยังไม่ได้ใช้ reply token ของข้อความนั้นเท่านั้น (ทุกโฟลว์ที่ตอบแล้วจะ return/ข้ามไปก่อน)
     # สถานะจำในหน่วยความจำ: ถ้าเครื่องรีสตาร์ตกลางเช้า อาจทักซ้ำได้อีกครั้งในเช้าเดียวกัน — ยอมรับในฉบับแรกนี้
@@ -962,6 +1003,10 @@ def maybe_morning_greeting(event):
             w = fetch_city_weather(name, lat, lon)
             if w:
                 lines.append(w)
+        # รอบ 14: แนบเตือนวันพระพรุ่งนี้ (วงสำรองของ push — ดู tomorrow_wan_phra_line ด้านบน)
+        wp_line = tomorrow_wan_phra_line(now)
+        if wp_line:
+            lines.append(wp_line)
         MORNING_GREETED['date'] = today
         MORNING_GREETED['group'] = group_id
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(lines)))
