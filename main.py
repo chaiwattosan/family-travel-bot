@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-10-31-r13 — รอบ 13 (เมนูฟุตบอลไทยลีกแบบ Flex 4 ปุ่มให้อากง: โปรแกรมแข่ง/ผลการแข่ง/ทีมลำพูน/ทีมอยุธยา)
+# BOT VERSION: 2026-11-03-r17 — รอบ 17 (ปรับการแจ้งเตือนตามฟีดแบ็กครอบครัว 3 พ.ย. 2569: @tag บอท = คุยกับบอท ตอบเลยไม่ต้องมีรูปคำถาม, ทักทายเช้าแยกหัวข้อ "วันนี้ต้องทำ/พรุ่งนี้ต้องเตรียม" + แยกวันพระเตรียมของออกจากวันพระจริง, ตัด push รายตัวของวันพระ/น้ำดื่มมาส่งออกให้สรุปเช้ารับจบ; ไม่ทำ push 06:00 เพราะเปลืองโควตา — นายเคาะให้รอคนทักเช้าเหมือนเดิม)
 import re
 import json
 import time
@@ -801,6 +801,18 @@ def background_calendar_reminder_worker():
                             lead = f"อีก {minutes} นาที"
 
                         summary = event.get('summary', 'ไม่มีหัวข้อ')
+                        # รอบ 17 (ฟีดแบ็กครอบครัว 3 พ.ย. 2569): อานุกบอกว่าบอทเตือนเยอะ นายจึงเคาะให้
+                        # "วันพระ" กับ "น้ำดื่มมาส่ง" ไม่ต้อง push รายตัวอีก — สองเรื่องนี้ไม่มีจังหวะที่
+                        # พลาดแล้วเสียหาย (ต่างจากเปิดไฟหน้าบ้าน/ล้อหมุนที่ต้องเป๊ะตามเวลา) และทักทายเช้า
+                        # (reply ฟรี ไม่กินโควตา) สรุปให้ครบทั้ง "วันนี้ต้องทำ" และ "พรุ่งนี้ต้องเตรียม"
+                        # อยู่แล้ว การ push ซ้ำคือตัวซ้ำที่ทำให้คนในบ้านรำคาญ — เคสจริงเช้า 3 พ.ย. 2569:
+                        # push วันพระยิง 06:00 มาตามปกติแต่ยังพ่วงข้อความ "(ซื้อดอกไม้เตรียมไว้)" ใน
+                        # วันพระจริง ยิ่งตอกย้ำความสับสนว่าวันไหนต้องซื้อ วันไหนคือวันพระ
+                        # tradeoff ที่นายรับทราบตอนเคาะแบบ: ถ้าเช้าวันก่อนวันพระไม่มีใครทักในกลุ่มเลย
+                        # บรรทัดเตรียมดอกไม้จะไม่โผล่ — บ้านนี้ทักเช้ากันทุกวัน นายเลยเลือกเก็บโควตาไว้
+                        if 'วันพระ' in summary or 'น้ำดื่มมาส่ง' in summary:
+                            notified.add(key)
+                            continue
                         alert_text = (
                             f"⏰ **แจ้งเตือนกำหนดการ!**\n"
                             f"📌 เรื่อง: {summary}\n"
@@ -960,12 +972,16 @@ def is_weather_question(text):
         return False
     return len(t) <= 10 or any(c in t for c in WEATHER_QUESTION_CUES)
 
-def tomorrow_wan_phra_line(now):
-    # วงสำรองของเตือนวันพระ (รอบ 14 — จากเคสจริง 2 พ.ย. 2569 ที่ push เตือนล่วงหน้า 1 วันหลุดเงียบ ๆ
-    # ตามรายละเอียดในตัวเตือนด้านบน): ทักทายเช้าใช้ reply ซึ่งพิสูจน์แล้วว่าเข้ากลุ่มชัวร์ทุกเช้าที่มีคนทัก
-    # (เช้า 2 พ.ย. อากงทัก 06:41 บอทตอบทันที) ถ้าพรุ่งนี้เป็นวันพระ ให้แนบบรรทัดเตือนซื้อดอกไม้ไปกับ
-    # ทักทายเช้าของวันนี้เลย — ช้ากว่า push 06:30 นิดหน่อยแต่ไม่หลุด และอาหนุ่ยเห็นตอนเช้าทันเตรียมของ
-    # อ่านปฏิทินวันพรุ่งนี้อย่างเดียว คืน None เมื่อไม่ใช่วันพระ/อ่านไม่ได้ (ห้ามทำให้ทักทายเช้าพัง)
+def tomorrow_prep_lines(now):
+    # หัวข้อ "พรุ่งนี้ต้องเตรียม" ในทักทายเช้า (รอบ 17 — พัฒนาต่อจาก tomorrow_wan_phra_line ของรอบ 14):
+    # ที่มาเดิมของวงนี้คือเคส 2 พ.ย. 2569 ที่ push เตือนวันพระล่วงหน้า 1 วันหลุดเงียบ ๆ ทักทายเช้า (reply ฟรี)
+    # จึงรับหน้าที่เตือนเตรียมของแทนมาตั้งแต่รอบ 14 — รอบ 17 นายขยายจาก "เฉพาะวันพระ" เป็นรายการเตรียมตัว
+    # ของพรุ่งนี้ทุกเรื่อง (ฟีดแบ็กครอบครัว 3 พ.ย. 2569: ให้สรุปเช้าอันเดียวบอกครบ ทั้งอากาศ/ฝุ่น สิ่งที่ต้อง
+    # เตรียมวันนี้ และนัดของพรุ่งนี้) และนายสั่งแยกความหมายให้ชัด: บรรทัดในหัวข้อนี้แปลว่า "พรุ่งนี้มีเรื่องนี้
+    # วันนี้คือวันเตรียม" เช่น พรุ่งนี้วันพระ = วันนี้ซื้อดอกไม้เตรียมไว้ ส่วนวันพระจริงจะไปโผล่ในหัวข้อ
+    # "วันนี้ต้องทำ" ของเช้าวันนั้นแทน ไม่ปนกันอีก (เคสสับสนจริงจาก push เช้า 3 พ.ย. 2569)
+    # กติกาเดียวกับสรุปวันนี้: ตัดงานประจำ "เปิดไฟหน้าบ้าน", แสดงสูงสุด 5 รายการ,
+    # คืน [] เมื่อไม่มีอะไรต้องเตรียม/อ่านปฏิทินไม่ได้ (ห้ามทำให้ทักทายเช้าพัง)
     try:
         service = get_calendar_service()
         day_start = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -977,13 +993,29 @@ def tomorrow_wan_phra_line(now):
             singleEvents=True,
             orderBy='startTime'
         ).execute()
+        items = []
         for e in res.get('items', []):
-            if 'วันพระ' in (e.get('summary') or ''):
-                return "🙏 พรุ่งนี้วันพระนะครับ — เตรียมดอกไม้/ของไหว้ไว้ได้เลยครับ"
-        return None
+            summary = (e.get('summary') or '').strip()
+            start_str = (e.get('start') or {}).get('dateTime')
+            if not summary or not start_str:
+                continue  # ข้ามอีเวนต์ทั้งวัน (ไม่มีเวลาเริ่ม)
+            if 'เปิดไฟ' in summary:
+                continue  # งานประจำทุกวัน ไม่ต้องเตรียมอะไร
+            start_dt = datetime.fromisoformat(start_str).astimezone(now.tzinfo)
+            hhmm = start_dt.strftime('%H:%M')
+            if 'วันพระ' in summary:
+                items.append("• พรุ่งนี้วันพระ — วันนี้ซื้อดอกไม้/ของไหว้เตรียมไว้ครับ")
+            elif 'น้ำดื่มมาส่ง' in summary:
+                items.append(f"• พรุ่งนี้น้ำดื่มมาส่ง {hhmm} น. — เตรียมถังเปล่าไว้ครับ")
+            else:
+                items.append(f"• พรุ่งนี้ {hhmm} น. {summary}")
+        if len(items) > 5:
+            extra = len(items) - 5
+            items = items[:5] + [f"• …และอีก {extra} รายการครับ"]
+        return items
     except Exception as e:
-        print(f"Tomorrow wan phra check failed: {e}")
-        return None
+        print(f"Tomorrow prep check failed: {e}")
+        return []
 
 def today_schedule_lines(now):
     # สรุปกำหนดการ "วันนี้" แนบท้ายทักทายเช้า (รอบ 15 — นายเสนอเอง 2 พ.ย. 2569 หลังเห็น log เช้าวันเดียวกัน:
@@ -1021,7 +1053,18 @@ def today_schedule_lines(now):
             if end_str and 'วันพระ' not in summary:
                 if datetime.fromisoformat(end_str).astimezone(now.tzinfo) <= now:
                     continue  # จบไปแล้วก่อนคนทักเช้า ไม่ต้องเล่าซ้ำ
-            items.append(f"• {start_dt.strftime('%H:%M')} น. {summary}")
+            # รอบ 17: เขียนเป็น "สิ่งที่ต้องทำ" ไม่ใช่แค่ชื่ออีเวนต์ลอย ๆ — วันพระของวันนี้ต้องตัดท้าย
+            # "(ซื้อดอกไม้เตรียมไว้)" ออก เพราะการซื้อเป็นงานของ "เมื่อวาน" ที่หัวข้อพรุ่งนี้ต้องเตรียม
+            # บอกไปแล้ว (เคสจริงเช้า 3 พ.ย. 2569: push วันพระยังพ่วงประโยคซื้อดอกไม้ในวันพระจริง
+            # คนอ่านเลยแยกไม่ออกว่าวันไหนซื้อ วันไหนไหว้) ส่วนน้ำดื่มมาส่งให้บอกการเตรียมถัง/เงินไว้เลย
+            # เพราะอาหนุ่ยต้องเตรียมก่อนรถมาถึง (ประวัติส่งจริง: 7 ถัง 210 บาททุก 14 วัน)
+            if 'วันพระ' in summary:
+                clean = ' '.join(summary.replace('(ซื้อดอกไม้เตรียมไว้)', '').split())
+                items.append(f"• {start_dt.strftime('%H:%M')} น. {clean} — วันนี้วันพระครับ")
+            elif 'น้ำดื่มมาส่ง' in summary:
+                items.append(f"• {start_dt.strftime('%H:%M')} น. {summary} — เตรียมถังเปล่ากับเงินไว้ครับ")
+            else:
+                items.append(f"• {start_dt.strftime('%H:%M')} น. {summary}")
         if len(items) > 5:
             extra = len(items) - 5
             items = items[:5] + [f"• …และอีก {extra} รายการครับ"]
@@ -1052,12 +1095,14 @@ def maybe_morning_greeting(event):
         # ไม่มีรายการที่ต้องบอก = ไม่เติมหัวข้อเลย ทักทายจะได้สั้นเหมือนเดิม
         sched = today_schedule_lines(now)
         if sched:
-            lines.append("📋 กำหนดการวันนี้ครับ")
+            lines.append("📌 วันนี้ต้องทำครับ")
             lines.extend(sched)
-        # รอบ 14: แนบเตือนวันพระพรุ่งนี้ (วงสำรองของ push — ดู tomorrow_wan_phra_line ด้านบน)
-        wp_line = tomorrow_wan_phra_line(now)
-        if wp_line:
-            lines.append(wp_line)
+        # รอบ 17: แนบหัวข้อ "พรุ่งนี้ต้องเตรียม" (แทนบรรทัดวันพระพรุ่งนี้เส้นเดียวของรอบ 14 —
+        # ดู tomorrow_prep_lines ด้านบน) ไม่มีเรื่องต้องเตรียม = ไม่เติมหัวข้อเลย ทักทายจะได้สั้น
+        prep = tomorrow_prep_lines(now)
+        if prep:
+            lines.append("🧺 พรุ่งนี้ต้องเตรียมครับ")
+            lines.extend(prep)
         MORNING_GREETED['date'] = today
         MORNING_GREETED['group'] = group_id
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(lines)))
@@ -2300,11 +2345,39 @@ def handle_appt_flow(event, msg_text):
         return True
     return False
 
+# ===== รอบ 17: @tag บอท = คุยกับบอทตรง ๆ =====
+# เคสจริง 2 พ.ย. 2569: อาหนุ่ยพิมพ์ "@Bot A บ้านตั้งทอง วันพระเดือนนี้" ในกลุ่ม บอทเงียบสนิท เพราะ
+# (1) โค้ดเดิมไม่เคยอ่านข้อมูล mention จาก LINE เลย และ (2) ประตู QA บังคับว่าต้องมีคำใบ้คำถาม
+# (ไหม/วันไหน/...) ซึ่งประโยคของอาหนุ่ยไม่มี — นายต้องพิมพ์ซ้ำเป็น "วันพระเดือนนี้มีวันไหนบ้าง" บอทถึงตอบ
+# หลักของรอบนี้ (นายเคาะ 3 พ.ย. 2569): คนที่ tag คือตั้งใจคุยกับบอทอยู่แล้ว สัญญาณ tag ใช้แทนรูปคำถามได้
+# ส่วนข้อความที่ไม่ได้ tag ยังใช้ประตูเข้มแบบเดิมทุกอย่าง กันบอทแทรกกลางวงคุยของครอบครัว
+# การตัดชื่อบอทออกจากข้อความตั้งแต่ต้นทางยังช่วยโฟลว์อื่นด้วย เช่น "@Bot A บอล" จะเหลือ "บอล" เข้าเมนูฟุตบอลพอดี
+BOT_MENTION_MARKERS = ('@Bot A บ้านตั้งทอง', '@Bot A')
+
+def split_bot_mention(event, text):
+    # คืน (ถูกจ่าหน้าถึงบอทไหม, ข้อความที่ตัดชื่อบอทออกแล้ว) — อ่าน mention metadata แบบ defensive
+    # (แต่ละเวอร์ชันของ SDK ตั้งชื่อฟิลด์ไม่เหมือนกัน) และสำรองด้วยตัวข้อความ "@Bot A ..." ที่ LINE แสดงจริง
+    t = text or ''
+    addressed = False
+    try:
+        mention = getattr(event.message, 'mention', None)
+        for m in (getattr(mention, 'mentionees', None) or []):
+            if getattr(m, 'is_self', False) or getattr(m, 'isSelf', False):
+                addressed = True
+    except Exception:
+        pass
+    for marker in BOT_MENTION_MARKERS:
+        if marker in t:
+            addressed = True
+            t = t.replace(marker, ' ')
+    return addressed, ' '.join(t.split())
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     try:
         user_id = event.source.user_id
-        msg_text = event.message.text
+        # รอบ 17: ตัดชื่อบอทออกจากข้อความที่ถูก tag มาตั้งแต่ต้นทาง และจำไว้ว่าข้อความนี้จ่าหน้าถึงบอท
+        addressed_to_bot, msg_text = split_bot_mention(event, event.message.text)
 
         # 0. คำสั่งเปิดแอปครัว: พิมพ์คีย์เวิร์ดสั้น ๆ บอทตอบลิงก์เว็บแอปทันที (ไม่ผ่าน AI ไม่ลง log ไม่ต้องดึงโปรไฟล์)
         if msg_text.strip().lower() in KITCHEN_KEYWORDS:
@@ -2340,7 +2413,18 @@ def handle_text_message(event):
         # (ตอบแล้วข้ามโหมดสร้างนัด แต่ยังไหลไปบันทึก log + แจ้งแอดมินตามปกติ)
         qa_answer = None
         follow_q = None
-        if is_image_summary_request(msg_text):
+        if addressed_to_bot and not msg_text:
+            # tag บอทมาเปล่า ๆ ไม่มีข้อความตามหลัง — ตอบเมนูสั้น ๆ ว่าถามอะไรได้บ้าง แทนที่จะเงียบใส่
+            qa_answer = "ครับ เรียกบอทได้เลยครับ 🙏 ถามสั้น ๆ ได้เลย เช่น 'วันพระเดือนนี้' 'ตารางวันนี้' 'อากาศวันนี้' หรือพิมพ์ 'ฟุตบอล' เพื่อดูโปรแกรมบอลครับ"
+        elif addressed_to_bot and 'รูป' not in msg_text and not any(v in msg_text for v in QA_CREATE_VERBS + ['ฝากนัด', 'ลงนัด', 'สร้างนัด', 'ทำนัด']) and ('วันพระ' in msg_text or any(k in msg_text for k in ('ตาราง', 'กำหนดการ', 'แผน', 'นัด'))):
+            # รอบ 17: ถูก tag = คุยกับบอทตรง ๆ ไม่ต้องรอคำใบ้คำถาม (เคสอาหนุ่ย 2 พ.ย. 2569 ข้างบน)
+            # กันไว้ 2 ชั้น: ข้อความขอสรุป "รูป" มีโฟลว์เฉพาะของมัน (บทเรียน 23 ต.ค.) และคำสั่งสร้างนัด
+            # ชัด ๆ ต้องไหลไปโฟลว์สร้างนัดตามเดิม ไม่ใช่โดนแย่งมาตอบเป็นรายการนัด
+            try:
+                qa_answer = answer_schedule_question(msg_text)
+            except Exception as e:
+                print(f"Schedule Q&A (mention) error: {e}")
+        elif is_image_summary_request(msg_text):
             # ขอสรุปจากรูป: ตอบตามจริงว่ายังทำไม่ได้ แทนที่จะหลุดไปตอบจากปฏิทิน (เคส 23 ต.ค. 2026)
             qa_answer = "ขออภัยครับ ตอนนี้บอทยังสรุปเนื้อหาจากรูปในแชตไม่ได้ครับ 📷 รูปถูกบันทึกเข้าชีตให้เรียบร้อยแล้ว ถ้าต้องการให้สรุปเป็นนัดหรือลงปฏิทิน พิมพ์รายละเอียดเป็นข้อความมาได้เลยครับ"
         elif is_schedule_question(msg_text):
@@ -2386,7 +2470,8 @@ def handle_text_message(event):
 
         # 0.87 ถามพยากรณ์อากาศ/ฝุ่น "ล่าสุดตอนนั้น" ได้ตลอดวัน (รอบ 11) — ใช้ตัวดึงอากาศชุดเดียวกับทักทายเช้า
         # แต่กำกับเวลาที่ถามไว้ในหัวข้อความ กันสับสนว่าเป็นค่าของรอบเช้า; ระบุชื่อเมืองเดียวก็ตอบเมืองนั้นเมืองเดียว
-        if not qa_answer and not plan_handled and not travel_handled and not appt_handled and is_weather_question(msg_text):
+        # รอบ 17: ถ้าถูก tag มาด้วย แค่มีคำเรื่องอากาศ/ฝุ่นก็ตอบเลย ไม่ต้องมีคำใบ้คำถาม (หลัก tag เดียวกับ QA)
+        if not qa_answer and not plan_handled and not travel_handled and not appt_handled and (is_weather_question(msg_text) or (addressed_to_bot and any(k in msg_text for k in WEATHER_KEYWORDS))):
             now_str = datetime.now(pytz.timezone('Asia/Bangkok')).strftime('%H:%M')
             asked_cities = [c for c in WEATHER_CITIES if c[0] in msg_text] or WEATHER_CITIES
             wlines = [f"🌤 พยากรณ์ล่าสุด (เวลา {now_str} น.)"]
