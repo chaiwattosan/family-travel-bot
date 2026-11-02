@@ -985,6 +985,51 @@ def tomorrow_wan_phra_line(now):
         print(f"Tomorrow wan phra check failed: {e}")
         return None
 
+def today_schedule_lines(now):
+    # สรุปกำหนดการ "วันนี้" แนบท้ายทักทายเช้า (รอบ 15 — นายเสนอเอง 2 พ.ย. 2569 หลังเห็น log เช้าวันเดียวกัน:
+    # "ถ้ามีใครทักตอนเช้า ให้บอกสรุปหมายกำหนดการวันนี้ออกมาเลย แล้วพอถึงเวลาก็เตือนซ้ำตามปกติ")
+    # หลักคิด: สองวงทำคนละหน้าที่ — สรุปเช้าไว้ "วางแผนวัน" (เตรียมของ/เตรียมตัวแต่เช้า) ส่วนเตือนตามเวลาเดิม
+    # ไว้ "กันลืมจังหวะจริง" การเห็นซ้ำจึงเป็นเจตนา ไม่ใช่บั๊ก และวงเช้าเดินบน reply ที่พิสูจน์แล้วว่าเข้าชัวร์
+    # กติกากรอง (กันสรุปกลายเป็นขยะจนคนเลิกอ่าน):
+    # - ตัดงานประจำทุกวัน "เปิดไฟหน้าบ้าน 18:30" ออก — เคสจริงวันนี้ (2 พ.ย.) ปฏิทินมีแค่รายการนี้รายการเดียว
+    #   ถ้าไม่ตัด ทักทายเช้าจะแถมสรุปที่ทุกคนรู้อยู่แล้วทุกวัน
+    # - รายการที่จบไปแล้วก่อนเวลาทัก ไม่แสดง (เช็คจากเวลาสิ้นสุด) ยกเว้น "วันพระ" ซึ่งสำคัญทั้งวัน
+    #   (วันพระเริ่ม 06:30 แต่คนทักเช้าแรกอาจมาหลังนั้น ยังต้องเห็น)
+    # - แสดงสูงสุด 5 รายการ เกินนั้นสรุปเป็น "และอีก N รายการ" กันข้อความยาวเกิน
+    # คืน [] เมื่อไม่มีอะไรต้องบอก/อ่านปฏิทินไม่ได้ — ผู้เรียกจะไม่เติมหัวข้อเลย (ห้ามทำให้ทักทายเช้าพัง)
+    try:
+        service = get_calendar_service()
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        res = service.events().list(
+            calendarId=FAMILY_CALENDAR_ID,
+            timeMin=day_start.isoformat(),
+            timeMax=day_end.isoformat(),
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        items = []
+        for e in res.get('items', []):
+            summary = (e.get('summary') or '').strip()
+            start_str = (e.get('start') or {}).get('dateTime')
+            if not summary or not start_str:
+                continue  # ข้ามอีเวนต์ทั้งวัน (ไม่มีเวลาเริ่ม)
+            if 'เปิดไฟ' in summary:
+                continue  # งานประจำทุกวัน ไม่ต้องสรุป (เหตุผลในคอมเมนต์หัวฟังก์ชัน)
+            start_dt = datetime.fromisoformat(start_str).astimezone(now.tzinfo)
+            end_str = (e.get('end') or {}).get('dateTime')
+            if end_str and 'วันพระ' not in summary:
+                if datetime.fromisoformat(end_str).astimezone(now.tzinfo) <= now:
+                    continue  # จบไปแล้วก่อนคนทักเช้า ไม่ต้องเล่าซ้ำ
+            items.append(f"• {start_dt.strftime('%H:%M')} น. {summary}")
+        if len(items) > 5:
+            extra = len(items) - 5
+            items = items[:5] + [f"• …และอีก {extra} รายการครับ"]
+        return items
+    except Exception as e:
+        print(f"Today schedule check failed: {e}")
+        return []
+
 def maybe_morning_greeting(event):
     # เรียกจากจุดที่แน่ใจว่าบอทยังไม่ได้ใช้ reply token ของข้อความนั้นเท่านั้น (ทุกโฟลว์ที่ตอบแล้วจะ return/ข้ามไปก่อน)
     # สถานะจำในหน่วยความจำ: ถ้าเครื่องรีสตาร์ตกลางเช้า อาจทักซ้ำได้อีกครั้งในเช้าเดียวกัน — ยอมรับในฉบับแรกนี้
@@ -1003,6 +1048,12 @@ def maybe_morning_greeting(event):
             w = fetch_city_weather(name, lat, lon)
             if w:
                 lines.append(w)
+        # รอบ 15: แนบสรุปกำหนดการวันนี้ (นายเสนอ 2 พ.ย. — ดู today_schedule_lines ด้านบน)
+        # ไม่มีรายการที่ต้องบอก = ไม่เติมหัวข้อเลย ทักทายจะได้สั้นเหมือนเดิม
+        sched = today_schedule_lines(now)
+        if sched:
+            lines.append("📋 กำหนดการวันนี้ครับ")
+            lines.extend(sched)
         # รอบ 14: แนบเตือนวันพระพรุ่งนี้ (วงสำรองของ push — ดู tomorrow_wan_phra_line ด้านบน)
         wp_line = tomorrow_wan_phra_line(now)
         if wp_line:
