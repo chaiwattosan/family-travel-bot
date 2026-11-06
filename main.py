@@ -1,5 +1,7 @@
 import os
-# BOT VERSION: 2026-11-06-r20 — รอบ 20 (เก็บธง "ทักทายเช้าแล้ว" ลง Google Sheet ให้รอดข้ามการรีสตาร์ต: เคสจริงเช้า 6 พ.ย. 2569 ทักทายออก 2 รอบในวันเดียว — รอบแรก 07:25 จากการทดสอบหลัง deploy r18, รอบสอง 09:15 ตอนสมาชิกส่งข้อความแรกหลังมีการ deploy r19 ตอน 07:55 เพราะธงเดิมเป็นตัวแปรในหน่วยความจำ รีสตาร์ตแล้วหายหมด; รอบนี้เช็ก/จองสิทธิ์ในชีต "bot_state" ของสเปรดชีตเล่มเดิมก่อนทัก อ่าน/เขียนชีตไม่ได้ให้ถอยไปใช้ธงหน่วยความจำแบบรอบ 18 — ดู read_persisted_greeting / write_persisted_greeting และ maybe_morning_greeting)
+# BOT VERSION: 2026-11-06-r22 — รอบ 22 (ลดความรกของกลุ่มในวันงานซ้อน — ฟีดแบ็กอานุก + เคสจริงเช้า 6 พ.ย. 2569: ทักทาย 09:15 list งานครบแล้ว เตือน 30 นาทีของช่างอลูมิเนียมยังยิงซ้ำ 09:30; นายเคาะกรอบ: (1) ถ้าวันนี้ทักทาย + list ทั้งวันไปแล้ว ให้ข้ามเตือนล่วงหน้า 30 นาทีของรายการที่อยู่ใน list — เฉพาะเตือนธรรมดา [30] ของงานทั่วไปเท่านั้น ยกเว้นนัดหาหมอ/ใบนัด (ตัว 30 นาทีคือตัวกำหนดเวลาออกบ้าน) และนัดที่สมาชิกสั่งเตือนไว้ชัดหลายชั้น (2) ถ้าเช้านั้นไม่มีใครทักเลย พอถึงเวลาเตือนแรกของวันให้ "อัปเกรด" push นั้นเป็นทักทาย + list ทั้งวันแทน (push เดียว โควตาเท่าเดิม ไม่เพิ่ม push ทักทายแยก) (3) รายการที่ list ไปแล้วเก็บเป็น event ID ลงชีต bot_state ให้ตัวเตือนเช็กตรงตัว — ดู today_schedule_entries / claim_greeting_state / send_greeting_push และบล็อก "รอบ 22" ใน background_calendar_reminder_worker)
+# (ประวัติรอบ 21: 2026-11-06-r21 — รอบ 21 (2 เรื่องจากเคสจริงเช้า 6 พ.ย. 2569: (1) "ล้อหมุน" — อาหนุ่ยพิมพ์บอกเวลาออกบ้านมาในข้อความสั่งนัดเดียวกันแล้ว ("ล้อหมุน 9.50 น.") แต่บอทยังถาม "ออกบ้านกี่โมง" ซ้ำจนไม่มีใครตอบ เพราะตัวถามไม่รู้ว่าเวลาเริ่มนัดมาจากคำว่าล้อหมุน; รอบนี้ตรวจคำว่า ล้อหมุน/ออกบ้าน + เวลา ในข้อความต้นทางแบบ deterministic ถ้าเจอให้จดเวลาออกบ้านลงนัดเลย ไม่ถามซ้ำ — ดู extract_stated_departure (2) "ร่างนัดรอบถัดไปจากรายงาน" — อาหนุ่ยรายงานฉีดปลวกเสร็จ + "อีก 4 เดือนมาใส่ซ้ำรอบ 2" โดยไม่ได้สั่งบอท ข้อมูลรอบถัดไปเกือบหายไปกับบทสนทนา; รอบนี้ถ้าข้อความคุยทั่วไปมีสัญญาณ "งานซ้ำ + ระยะห่างรอบ" และวันนี้มีอีเวนต์บริการที่จบไปแล้วให้จับคู่ บอทจะเสนอร่างนัดรอบถัดไปให้สมาชิกพิมพ์ "ลงนัด" ยืนยันก่อนเสมอ ไม่ลงเองเงียบ ๆ — ร่างเก็บในชีต bot_state (รอดข้ามรีสตาร์ต) หมดอายุเที่ยงคืน — ดู handle_followup_report)
+# (ประวัติรอบ 20: 2026-11-06-r20 — รอบ 20 (เก็บธง "ทักทายเช้าแล้ว" ลง Google Sheet ให้รอดข้ามการรีสตาร์ต: เคสจริงเช้า 6 พ.ย. 2569 ทักทายออก 2 รอบในวันเดียว — รอบแรก 07:25 จากการทดสอบหลัง deploy r18, รอบสอง 09:15 ตอนสมาชิกส่งข้อความแรกหลังมีการ deploy r19 ตอน 07:55 เพราะธงเดิมเป็นตัวแปรในหน่วยความจำ รีสตาร์ตแล้วหายหมด; รอบนี้เช็ก/จองสิทธิ์ในชีต "bot_state" ของสเปรดชีตเล่มเดิมก่อนทัก อ่าน/เขียนชีตไม่ได้ให้ถอยไปใช้ธงหน่วยความจำแบบรอบ 18 — ดู read_persisted_greeting / write_persisted_greeting และ maybe_morning_greeting)
 # (ประวัติรอบ 19: 2026-11-06-r19 — รอบ 19 (ชิมลาง "ยิงเตือนตรงหาคนที่รับผิดชอบ" เพื่อประหยัดโควตา push: ตัวเลขจริงจาก OA Manager 6 พ.ย. 2569 ใช้ push ไป 70/300 ใน 5 วันแรกทั้งที่ยิงจริงแค่ ~7 ครั้ง เพราะ LINE นับ push เข้ากลุ่มตามจำนวนคนรับ (กลุ่ม 11 คนรวมบอท = คนรับ 10 → ครั้งละ 10 โควตา) เปิดไฟอย่างเดียว 30 วัน = 300 = โควตาทั้งเดือน; รอบนี้เฉพาะอีเวนต์ "เปิดไฟ" (งานประจำของอากง) จะยิงตรงหาผู้รับผิดชอบจาก env LIGHT_REMINDER_USER_ID (นับ 1/ครั้ง) ยิงตรงไม่ผ่านให้ถอยไปยิงกลุ่มตามเดิมในรอบเดียวกัน ส่วนเรื่องรวมของทั้งบ้านยังยิงเข้ากลุ่มเหมือนเดิม — ดู DIRECT_REMINDER_ROUTES ท้ายไฟล์ส่วนตัวเตือน)
 import re
 import json
@@ -113,35 +115,109 @@ def get_state_worksheet():
 def _greeting_state_key(group_id):
     return f"morning_greeted:{group_id}"
 
-def read_persisted_greeting(group_id):
-    # คืนค่า (ok, date_str): ok=False = อ่านชีตไม่ได้ (ผู้เรียกต้องถอยไปใช้หน่วยความจำ)
-    # date_str=None = อ่านได้ แต่กลุ่มนี้ยังไม่มีบันทึก/ถูกคืนสิทธิ์แล้ว
+def read_state_value(key):
+    # ตัวอ่าน state ใช้ร่วม (รอบ 21 — แยกออกมาจากตัวอ่านธงทักทายของรอบ 20 เพราะมีผู้ใช้รายที่สอง
+    # คือ "ร่างนัดรอบถัดไป" ที่ต้องจำข้ามรีสตาร์ตเหมือนกัน จะได้ไม่ต้องเขียนโค้ดชีตซ้ำสองชุด)
+    # คืนค่า (ok, value): ok=False = อ่านชีตไม่ได้, value=None = อ่านได้แต่ไม่มี key นี้/ค่าว่าง
     try:
         ws = get_state_worksheet()
         for row in ws.get_all_values()[1:]:
-            if row and row[0] == _greeting_state_key(group_id):
+            if row and row[0] == key:
                 return True, (row[1] if len(row) > 1 and row[1] else None)
         return True, None
     except Exception as e:
-        print(f"Greeting state read failed (fallback to memory): {e}")
+        print(f"State read failed for {key}: {e}")
         return False, None
 
-def write_persisted_greeting(group_id, date_str):
-    # บันทึกวันที่ทักล่าสุดของกลุ่ม (date_str='' = คืนสิทธิ์ตอนส่งไม่สำเร็จ) คืน True ถ้าเขียนสำเร็จ
+def write_state_value(key, value):
+    # ตัวเขียน state ใช้ร่วม: มีแถวของ key อยู่แล้วให้อัปเดต ไม่มีให้เพิ่มแถวใหม่ (value='' = ล้างค่า)
     try:
         ws = get_state_worksheet()
-        key = _greeting_state_key(group_id)
         now_s = datetime.now(pytz.timezone('Asia/Bangkok')).strftime('%Y-%m-%d %H:%M:%S')
         for idx, row in enumerate(ws.get_all_values()[1:], start=2):
             if row and row[0] == key:
-                ws.update_cell(idx, 2, date_str)
+                ws.update_cell(idx, 2, value)
                 ws.update_cell(idx, 3, now_s)
                 return True
-        ws.append_row([key, date_str, now_s])
+        ws.append_row([key, value, now_s])
         return True
     except Exception as e:
-        print(f"Greeting state write failed: {e}")
+        print(f"State write failed for {key}: {e}")
         return False
+
+def read_persisted_greeting(group_id):
+    # คืนค่า (ok, date_str): ok=False = อ่านชีตไม่ได้ (ผู้เรียกต้องถอยไปใช้หน่วยความจำ)
+    # date_str=None = อ่านได้ แต่กลุ่มนี้ยังไม่มีบันทึก/ถูกคืนสิทธิ์แล้ว
+    return read_state_value(_greeting_state_key(group_id))
+
+def write_persisted_greeting(group_id, date_str):
+    # บันทึกวันที่ทักล่าสุดของกลุ่ม (date_str='' = คืนสิทธิ์ตอนส่งไม่สำเร็จ) คืน True ถ้าเขียนสำเร็จ
+    return write_state_value(_greeting_state_key(group_id), date_str)
+
+def read_all_state():
+    # อ่าน state ทั้งชีต bot_state ในครั้งเดียว → dict {key: value} (คืน {} ถ้าอ่านไม่ได้)
+    # ผู้ใช้หลักคือตัวเตือน (รอบ 22) ที่ต้องรู้ในรอบเดียวกันว่า "วันนี้ทักทายแล้วหรือยัง + list
+    # อีเวนต์ไหนไปบ้าง" — อ่านรวมครั้งเดียวต่อรอบ (60 วิ) ถูกกว่าอ่านทีละ key หลายรอบ
+    try:
+        ws = get_state_worksheet()
+        out = {}
+        for row in ws.get_all_values()[1:]:
+            if row and row[0]:
+                out[row[0]] = row[1] if len(row) > 1 else ''
+        return out
+    except Exception as e:
+        print(f"State bulk read failed: {e}")
+        return {}
+
+# ===== รอบ 22: บันทึก "รายการที่ทักทายเช้า list ไปแล้ว" เป็น event ID =====
+# เหตุผลที่เก็บ ID ไม่เก็บชื่อ/เวลา: ตัวเตือนต้องตัดสินใจข้าม/ไม่ข้ามแบบตรงตัว ชื่ออีเวนต์ซ้ำกันได้
+# (เช่น ฉีดปลวกหลายรอบ) และเวลาแก้ได้ทีหลัง — ID คือสิ่งเดียวที่ไม่กำกวม
+# รูปแบบค่า: JSON {"date": "YYYY-MM-DD", "ids": ["...", ...]} วันที่ไม่ตรงวันนี้ = หมดอายุทันที
+
+def _greeting_listed_key(group_id):
+    return f"greeting_listed:{group_id}"
+
+def write_greeting_listed(group_id, date_str, ids):
+    return write_state_value(_greeting_listed_key(group_id),
+                             json.dumps({'date': date_str, 'ids': list(ids)}, ensure_ascii=False))
+
+def parse_greeting_listed(raw, today):
+    # แปลงค่าดิบจาก state เป็น list ของ event ID — วันที่ไม่ใช่ของวันนี้/รูปแบบพัง = [] (ถือว่ายังไม่ list)
+    try:
+        data = json.loads(raw) if raw else None
+        if data and data.get('date') == today and isinstance(data.get('ids'), list):
+            return data['ids']
+    except Exception:
+        pass
+    return []
+
+def claim_greeting_state(group_id, today, listed_ids):
+    # จองสิทธิ์ "ทักทายวันนี้" พร้อมบันทึก ID รายการที่ list — ใช้โดยทักทายฝั่ง worker (รอบ 22
+    # fallback) ซึ่งไม่มี reply token ให้พึ่ง ต้องจองก่อน push แบบเดียวกับหลักรอบ 18/20
+    # คืน True = จองได้ (วันนี้ยังไม่มีใครทัก) / False = วันนี้ทักไปแล้ว ไม่ต้องทำอะไรต่อ
+    with MORNING_GREETING_LOCK:
+        if MORNING_GREETED.get('date') == today and MORNING_GREETED.get('group') == group_id:
+            return False
+        ok, persisted = read_persisted_greeting(group_id)
+        if ok and persisted == today:
+            MORNING_GREETED['date'] = today
+            MORNING_GREETED['group'] = group_id
+            return False
+        MORNING_GREETED['date'] = today
+        MORNING_GREETED['group'] = group_id
+    if ok:
+        write_persisted_greeting(group_id, today)
+    write_greeting_listed(group_id, today, listed_ids)
+    return True
+
+def release_greeting_state(group_id):
+    # คืนสิทธิ์ทักทาย (ใช้เมื่อจองแล้วแต่ push ไม่สำเร็จ) — ทั้งหน่วยความจำและชีต 2 key
+    with MORNING_GREETING_LOCK:
+        if MORNING_GREETED.get('group') == group_id:
+            MORNING_GREETED['date'] = None
+            MORNING_GREETED['group'] = None
+    write_persisted_greeting(group_id, '')
+    write_state_value(_greeting_listed_key(group_id), '')
 
 def get_calendar_service():
     creds = get_google_creds()
@@ -429,6 +505,73 @@ def parse_departure_time(text):
         return 12, 0
     return None
 
+def parse_clock_segment(seg):
+    # แปลงชิ้นข้อความสั้น ๆ ที่มีเวลา เช่น " 9.50 น. นะครับ" / " 9 โมงครึ่ง" → (ชั่วโมง, นาที) หรือ None
+    # กฎแปลงเวลาใช้ชุดเดียวกับ parse_departure_time แต่ไม่มีด่านกัน (ความยาว/คำถาม) เพราะผู้เรียก
+    # ตัดชิ้นข้อความหลังคำว่า ล้อหมุน/ออกบ้าน มาให้แล้ว (รอบ 21)
+    seg = _normalize_thai_clock_words(seg or '')
+    half = 30 if 'ครึ่ง' in seg else 0
+    m = re.search(r'(\d{1,2})[:.](\d{2})', seg)
+    if m:
+        return int(m.group(1)) % 24, int(m.group(2)) % 60
+    m = re.search(r'บ่าย\s*(\d{1,2})', seg)
+    if m:
+        return 12 + (int(m.group(1)) % 12), half
+    m = re.search(r'ตี\s*(\d{1,2})', seg)
+    if m:
+        return int(m.group(1)) % 12, half
+    m = re.search(r'(\d{1,2})\s*ทุ่ม', seg)
+    if m:
+        return (18 + int(m.group(1))) % 24, half
+    m = re.search(r'(\d{1,2})\s*โมง', seg)
+    if m:
+        h = int(m.group(1)) % 12
+        if 'เย็น' in seg and h < 12:
+            h += 12
+        return h, half
+    if 'เที่ยงคืน' in seg:
+        return 0, 0
+    if 'เที่ยง' in seg:
+        return 12, 0
+    return None
+
+DEPARTURE_LEAD_WORDS = ['ล้อหมุน', 'ออกเดินทาง', 'ออกจากบ้าน', 'ออกบ้าน', 'ออกกัน']
+
+def extract_stated_departure(text):
+    # รอบ 21 — เคสจริง 6 พ.ย. 2569: อาหนุ่ยพิมพ์นัดไปแอร์พอร์ทพร้อมบอก "ล้อหมุน 9.50 น."
+    # มาในข้อความเดียวกัน ตัวแยกนัดใช้ 09:50 เป็นเวลาเริ่มถูกแล้ว แต่ตัวถาม "ออกบ้านกี่โมง"
+    # ไม่รู้ว่าเวลานั้นคือเวลาออกบ้านที่ผู้พูดให้มาแล้ว จึงถามซ้ำและไม่มีใครตอบ
+    # ฟังก์ชันนี้ตรวจข้อความต้นทางแบบ deterministic: เจอคำนำเวลาออกบ้าน + เวลาตามหลังในระยะใกล้
+    # ให้ถือว่าผู้สั่ง "บอกเวลาออกบ้านมาแล้ว" — ผู้เรียก (โฟลว์สร้างนัด) จะจดลงนัดให้เลย ไม่ถามซ้ำ
+    t = text or ''
+    for w in DEPARTURE_LEAD_WORDS:
+        idx = t.find(w)
+        if idx >= 0:
+            got = parse_clock_segment(t[idx + len(w): idx + len(w) + 18])
+            if got:
+                return got
+    return None
+
+def record_departure_on_event(event_id, hh, mm):
+    # จดบรรทัด "🚗 เวลาออกบ้าน: HH:MM น." ลง description ของนัด (รูปแบบเดียวทุกโฟลว์ —
+    # แยกออกมาจาก handle_departure_answer เดิมในรอบ 21 เพื่อให้โฟลว์ "บอกมาพร้อมคำสั่งนัด"
+    # ใช้ตัวจดตัวเดียวกัน ไม่ต้องเขียนซ้ำ) คืน True ถ้าสำเร็จ/มีบรรทัดอยู่แล้ว
+    try:
+        service = get_calendar_service()
+        ev = service.events().get(calendarId=FAMILY_CALENDAR_ID, eventId=event_id).execute()
+        desc = ev.get('description', '') or ''
+        line = f"🚗 เวลาออกบ้าน: {hh:02d}:{mm:02d} น."
+        if line not in desc:
+            service.events().patch(
+                calendarId=FAMILY_CALENDAR_ID,
+                eventId=event_id,
+                body={'description': insert_before_remind_marker(desc, line)},
+            ).execute()
+        return True
+    except Exception as e:
+        print(f"Record departure error: {e}")
+        return False
+
 def handle_departure_answer(event, msg_text):
     # คืนข้อความตอบกลับ หรือ None ถ้าข้อความนี้ไม่ใช่คำตอบเวลาออกบ้านของนัดที่บอทถามค้างไว้
     parsed = parse_departure_time(msg_text)
@@ -440,24 +583,158 @@ def handle_departure_answer(event, msg_text):
             or not PENDING_DEPARTURE.get('expires') or now > PENDING_DEPARTURE['expires']):
         return None
     hh, mm = parsed
+    if not record_departure_on_event(PENDING_DEPARTURE['event_id'], hh, mm):
+        return None
+    summary = PENDING_DEPARTURE.get('summary', 'นัดหมาย')
+    PENDING_DEPARTURE['event_id'] = None
+    return f"🚗 รับทราบครับ นัด \"{summary}\" ออกบ้าน {hh:02d}:{mm:02d} น. นะครับ (จดลงปฏิทินให้แล้วครับ)"
+
+# ===== รอบ 21: ร่างนัดรอบถัดไปจาก "ข้อความรายงาน" (เสนอร่าง + รอยืนยัน ไม่ลงเอง) =====
+# เคสจริง 6 พ.ย. 2569: อาหนุ่ยรายงานในกลุ่มว่า "เสร็จเรียบร้อย ฉีดยาปลวก พ่นยุง" แล้วตามด้วย
+# "อีก 4 เดือนมาใส่ซ้ำรอบ 2" — เป็นการเล่าให้บ้านฟัง ไม่ได้สั่งบอท ตามกฎประตูเข้มเดิมบอทจึง
+# ไม่แตะต้อง (ถูกต้องในแง่ไม่ลงนัดเองโดยไม่มีใครสั่ง) แต่ข้อมูล "รอบถัดไป" เกือบหายไปกับบทสนทนา
+# ทางออกชั้นกลางตามแนวเดียวกับโหมดสรุปนัด/ใบนัดรูป: AI/โค้ด "เสนอร่าง" ได้ แต่ "ลงปฏิทิน"
+# ต้องมีสมาชิกยืนยันก่อนเสมอ — รอบนี้ใช้ด่าน deterministic ล้วน (ไม่เรียก Gemini):
+# ต้องมีครบ 3 อย่างในจังหวะเดียวกัน: (1) ข้อความมีคำว่างานนี้ "ทำซ้ำ" (2) มีระยะห่างรอบ
+# (อีก N เดือน/สัปดาห์/...) และ (3) วันนี้มีอีเวนต์บริการที่ "จบไปแล้ว" ให้จับคู่เป็นต้นแบบ
+# ร่างเก็บลงชีต bot_state (state ถาวรจากรอบ 20) หมดอายุเที่ยงคืนวันเดียวกัน
+# ถ้าชีตเขียนไม่ได้ = ไม่เสนอร่างเลย เพราะร่างที่บอทจำไม่ได้จะกลายเป็นนัดผีตอนมีคนพิมพ์ยืนยัน
+
+FOLLOWUP_DRAFT_KEY_PREFIX = "followup_draft:"
+FOLLOWUP_CYCLE_RE = re.compile(r'อีก\s*(\d+)\s*(เดือน|สัปดาห์|อาทิตย์|วัน|ปี)')
+FOLLOWUP_REPEAT_WORDS = ['ใส่ซ้ำ', 'ทำซ้ำ', 'ฉีดซ้ำ', 'พ่นซ้ำ', 'รอบสอง', 'รอบ 2', 'รอบต่อไป',
+                         'รอบหน้า', 'ครั้งต่อไป', 'นัดอีกครั้ง', 'มาอีกครั้ง', 'ซ้ำรอบ']
+FOLLOWUP_BASE_EXCLUDE = ['เปิดไฟ', 'วันพระ', 'น้ำดื่มมาส่ง', '(รอบถัดไป)']
+
+def _add_months(dt, months):
+    # บวกเดือนแบบปฏิทิน (วันที่เกินสิ้นเดือนให้หดเป็นวันสุดท้ายของเดือนนั้น เช่น 31 ม.ค. + 1 เดือน → 28/29 ก.พ.)
+    total = (dt.year * 12 + (dt.month - 1)) + months
+    y, m = divmod(total, 12)
+    m += 1
+    last_day = [31, 29 if (y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)) else 28,
+                31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+    return dt.replace(year=y, month=m, day=min(dt.day, last_day))
+
+def detect_followup_cycle(text):
+    # คืน (จำนวน, หน่วย) ถ้าข้อความมีทั้งคำ "ทำซ้ำ" และ "ระยะห่างรอบ" ครบ ไม่งั้น None
+    t = text or ''
+    if not any(w in t for w in FOLLOWUP_REPEAT_WORDS):
+        return None
+    m = FOLLOWUP_CYCLE_RE.search(t)
+    if not m:
+        return None
+    return int(m.group(1)), m.group(2)
+
+def fetch_recent_service_event(now):
+    # หาอีเวนต์ต้นแบบสำหรับรอบถัดไป: อีเวนต์ของ "วันนี้" ที่จบไปแล้ว (end <= now) ล่าสุด
+    # เหตุผลที่ต้องจบแล้ว: ข้อความรายงานเกิดหลังงานเสร็จเสมอ อีเวนต์ที่ยังไม่เริ่ม/กำลังดำเนิน
+    # (เช่น ช่างอลูมิเนียม 10:00 ในเช้าวันเดียวกัน) ไม่ใช่งานที่ถูกรายงาน — ถ้าเลือกจากเวลาเริ่ม
+    # ล่าสุดอย่างเดียวจะจับคู่ผิดตัว (เคสจริง 6 พ.ย.: ข้อความมา 10:08 มีอีเวนต์ 08:30 ฉีดปลวก
+    # ที่จบแล้ว กับ 10:00 ช่างที่เพิ่งเริ่ม) ข้ามอีเวนต์ทั้งวัน/งานประจำ/ร่างรอบถัดไปด้วยกันเอง
     try:
         service = get_calendar_service()
-        ev = service.events().get(calendarId=FAMILY_CALENDAR_ID, eventId=PENDING_DEPARTURE['event_id']).execute()
-        desc = ev.get('description', '') or ''
-        line = f"🚗 เวลาออกบ้าน: {hh:02d}:{mm:02d} น."
-        if line not in desc:
-            new_desc = insert_before_remind_marker(desc, line)
-            service.events().patch(
-                calendarId=FAMILY_CALENDAR_ID,
-                eventId=PENDING_DEPARTURE['event_id'],
-                body={'description': new_desc},
-            ).execute()
-        summary = PENDING_DEPARTURE.get('summary', 'นัดหมาย')
-        PENDING_DEPARTURE['event_id'] = None
-        return f"🚗 รับทราบครับ นัด \"{summary}\" ออกบ้าน {hh:02d}:{mm:02d} น. นะครับ (จดลงปฏิทินให้แล้วครับ)"
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        res = service.events().list(
+            calendarId=FAMILY_CALENDAR_ID,
+            timeMin=day_start.isoformat(),
+            timeMax=day_end.isoformat(),
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        best = None
+        for e in res.get('items', []):
+            summary = (e.get('summary') or '').strip()
+            s = (e.get('start') or {}).get('dateTime')
+            en = (e.get('end') or {}).get('dateTime')
+            if not summary or not s or not en:
+                continue
+            if any(x in summary for x in FOLLOWUP_BASE_EXCLUDE):
+                continue
+            end_dt = datetime.fromisoformat(en).astimezone(now.tzinfo)
+            if end_dt > now:
+                continue
+            start_dt = datetime.fromisoformat(s).astimezone(now.tzinfo)
+            reminders = parse_remind_marker(e.get('description', '') or '') or [30]
+            if best is None or end_dt > best['end_dt']:
+                best = {'summary': summary, 'start_dt': start_dt, 'end_dt': end_dt,
+                        'reminders': reminders}
+        return best
     except Exception as e:
-        print(f"Departure answer error: {e}")
+        print(f"Followup base event check failed: {e}")
         return None
+
+def handle_followup_report(event, msg_text, now=None):
+    # คืนข้อความตอบกลับ หรือ None ถ้าข้อความนี้ไม่เกี่ยวกับโฟลว์ร่างนัดรอบถัดไป
+    # ลำดับ: (ก) ถ้ามีร่างรออยู่ → ข้อความนี้อาจเป็นคำยืนยัน/ปฏิเสธ (ข) ถ้าไม่มีร่าง →
+    # ข้อความนี้อาจเป็นรายงานที่ควรเสนอร่าง หมายเหตุ: โฟลว์นี้ถูกเรียกหลังโฟลว์ร่างอื่น ๆ
+    # (สรุปนัด/เที่ยวบิน/ใบนัด) ใน handle_text_message ร่างของโฟลว์อื่นจึงมีสิทธิ์ก่อนเสมอ
+    group_id = getattr(event.source, 'group_id', None)
+    if not group_id or (FAMILY_GROUP_ID and group_id != FAMILY_GROUP_ID):
+        return None
+    tz = pytz.timezone('Asia/Bangkok')
+    now = now or datetime.now(tz)
+    key = FOLLOWUP_DRAFT_KEY_PREFIX + group_id
+    ok, raw = read_state_value(key)
+    draft = None
+    if ok and raw:
+        try:
+            draft = json.loads(raw)
+        except Exception:
+            draft = None
+    if draft:
+        try:
+            expires = datetime.fromisoformat(draft['expires']).astimezone(tz)
+        except Exception:
+            expires = None
+        if expires and now <= expires:
+            if is_reject_word(msg_text):
+                write_state_value(key, '')
+                return "รับทราบครับ ไม่ลงนัดรอบถัดไปให้นะครับ"
+            if normalize_short(msg_text) == 'ลงนัด' or is_confirm_word(msg_text):
+                link = add_to_calendar(draft['summary'], draft['start_time'],
+                                       draft.get('reminder_minutes') or [30])
+                if link:
+                    write_state_value(key, '')
+                    LAST_EVENT['scope'] = qa_scope(event)
+                    return (f"📅 **ลงปฏิทินให้แล้วครับ!**\n"
+                            f"📌 หัวข้อ: {draft['summary']}\n"
+                            f"⏰ เริ่ม: {draft['start_time']}\n"
+                            f"(นัดรอบถัดไปจากการรายงานในกลุ่ม ยืนยันโดยสมาชิกแล้ว)")
+                return "❌ ลงปฏิทินไม่สำเร็จครับ ร่างยังอยู่ ลองพิมพ์ \"ลงนัด\" อีกครั้งนะครับ"
+            return None  # ข้อความอื่นระหว่างร่างรออยู่ — ไม่เสนอร่างซ้ำ ไม่แย่งบทสนทนา
+        write_state_value(key, '')  # ร่างหมดอายุแล้ว — ล้างทิ้งก่อนพิจารณาข้อความนี้ต่อ
+    # (ข) เสนอร่างใหม่: ต้องไม่ใช่คำถาม และต้องมีสัญญาณรอบ + อีเวนต์ต้นแบบที่จบแล้ววันนี้
+    if any(q in msg_text for q in ['ไหม', 'มั้ย', '?', 'เมื่อไหร่', 'หรือยัง']):
+        return None
+    cyc = detect_followup_cycle(msg_text)
+    if not cyc:
+        return None
+    base = fetch_recent_service_event(now)
+    if not base:
+        return None
+    amount, unit = cyc
+    if unit == 'เดือน':
+        nd = _add_months(base['start_dt'], amount)
+    elif unit == 'ปี':
+        nd = _add_months(base['start_dt'], amount * 12)
+    elif unit in ('สัปดาห์', 'อาทิตย์'):
+        nd = base['start_dt'] + timedelta(weeks=amount)
+    else:
+        nd = base['start_dt'] + timedelta(days=amount)
+    draft = {
+        'summary': base['summary'] + ' (รอบถัดไป)',
+        'start_time': nd.strftime('%Y-%m-%dT%H:%M:%S'),
+        'reminder_minutes': base['reminders'],
+        'expires': now.replace(hour=23, minute=59, second=59).isoformat(),
+        'from_text': (msg_text or '')[:80],
+    }
+    if not write_state_value(key, json.dumps(draft, ensure_ascii=False)):
+        return None  # จำร่างไม่ได้ = ไม่เสนอ (ดูคอมเมนต์หัวส่วน)
+    return (f"🗓️ ได้ยินว่าอีก {amount} {unit}มีรอบถัดไปของ \"{base['summary']}\" ครับ "
+            f"เราทำร่างนัดไว้ให้เป็น **{fmt_thai_datetime(nd)}**\n"
+            f"ถ้าให้ลงปฏิทิน พิมพ์ \"ลงนัด\" ได้เลยครับ ไม่ต้องการพิมพ์ \"ไม่เอา\" "
+            f"(ร่างนี้หมดอายุเที่ยงคืนวันนี้ครับ)")
 
 def parse_calendar_intent(text):
     if not gemini_client:
@@ -852,6 +1129,21 @@ def background_calendar_reminder_worker():
             ).execute()
             events = events_result.get('items', [])
 
+            # รอบ 22: โหลดสถานะทักทายของวันนี้ครั้งเดียวต่อรอบ — วันนี้ทักทาย + list ทั้งวัน
+            # ไปแล้วหรือยัง และ list อีเวนต์ไหนไปบ้าง (ใช้ตัดสินข้ามเตือนซ้ำ/อัปเกรด push แรก
+            # ในวงเตือนด้านล่าง) ชีตอ่านไม่ได้ = state ว่าง = พฤติกรรมเท่าเดิมทุกอย่าง (เตือนครบ)
+            today_str = now.strftime('%Y-%m-%d')
+            greeted_today = False
+            listed_ids = []
+            if FAMILY_GROUP_ID:
+                state_map = read_all_state()
+                greeted_today = (state_map.get(_greeting_state_key(FAMILY_GROUP_ID)) == today_str
+                                 or (MORNING_GREETED.get('date') == today_str
+                                     and MORNING_GREETED.get('group') == FAMILY_GROUP_ID))
+                if greeted_today:
+                    listed_ids = parse_greeting_listed(
+                        state_map.get(_greeting_listed_key(FAMILY_GROUP_ID)), today_str)
+
             for event in events:
                 start_str = event['start'].get('dateTime')
                 if not start_str:
@@ -916,6 +1208,43 @@ def background_calendar_reminder_worker():
                             f"🕒 เริ่ม: {start_dt.strftime('%d/%m %H:%M น.')} ({lead})"
                         )
 
+                        # รอบ 22 (ก): รายการนี้อยู่ใน list ทักทายของวันนี้แล้ว และเป็นเตือนธรรมดา
+                        # ของงานทั่วไป → ข้าม ไม่ยิงซ้ำให้รกกลุ่ม (เคสจริง 6 พ.ย. 2569: ทักทาย
+                        # 09:15 list งานครบ 2 รายการแล้ว เตือนช่างอลูมิเนียม 09:30 ยังตามมาซ้ำ)
+                        if (FAMILY_GROUP_ID and greeted_today and start_dt.date() == now.date()
+                                and reminder_skippable_by_greeting(event, minutes, offsets)
+                                and event['id'] in listed_ids):
+                            print(f"Reminder skipped (already in morning list) for {key}")
+                            notified.add(key)
+                            continue
+
+                        # รอบ 22 (ข): วันนี้ยังไม่มีทักทายเลย และนี่คือเตือนแรกของวัน (เฉพาะ
+                        # อีเวนต์ที่เริ่มวันนี้ และไม่ใช่เตือนยิงตรงเฉพาะคน):
+                        # - เตือนธรรมดา → อัปเกรด push นี้เป็นทักทาย + list ทั้งวันแทนเตือนเดี่ยว
+                        #   (send_greeting_push) ถ้าอีเวนต์ตัวนี้อยู่ใน list ด้วยก็ไม่ต้องส่งซ้ำ
+                        # - ประเภทยกเว้น (หาหมอ/เตือนหลายชั้น) → เตือนเดี่ยวต้องชัดที่สุด ให้ list
+                        #   ทั้งวันพ่วงท้ายข้อความเตือนนี้แทน แล้วค่อยบันทึกสถานะทักทาย "หลัง"
+                        #   push สำเร็จ (claim ทีหลังเฉพาะสาขานี้: ตัวเตือนทำงานเส้นเดียว ความเสี่ยง
+                        #   ชนเหลือแค่ทักทายฝั่งข้อความในจังหวะเดียวกัน ผลเสียสุดคือ list ซ้ำ 1 ครั้ง
+                        #   ดีกว่า claim ก่อนแล้ว push พังจนวันนั้นถูกจำว่า "ทักแล้ว" ทั้งที่ไม่มีใคร
+                        #   เห็นอะไรเลย แล้วเตือนที่เหลือของวันถูกข้ามตามไปด้วย)
+                        claim_after_push_ids = None
+                        if (FAMILY_GROUP_ID and not greeted_today and start_dt.date() == now.date()
+                                and not direct_reminder_target(summary)):
+                            if reminder_skippable_by_greeting(event, minutes, offsets):
+                                up_ids = send_greeting_push(now)
+                                if up_ids is not None:
+                                    greeted_today = True
+                                    listed_ids = up_ids
+                                    if event['id'] in listed_ids:
+                                        notified.add(key)
+                                        continue
+                            else:
+                                entry_lines, entry_ids = today_schedule_entries(now)
+                                if entry_lines:
+                                    alert_text += "\n\n📋 วันนี้ทั้งวันครับ\n" + "\n".join(entry_lines)
+                                    claim_after_push_ids = entry_ids
+
                         # ปลายทางปกติ: กลุ่มครอบครัว (หรือแอดมินถ้าไม่ได้ตั้งกลุ่มไว้) — ระบบเหลือ Bot A
                         # ช่องเดียว (ช่องสำรองถูกลบไปแล้ว ดูคอมเมนต์เก็บกวาดรอบ 9 ต้นไฟล์) ถ้าเจอ 429 =
                         # โควตา push ของเดือนนั้นหมด ให้บันทึก log ไว้ชัด ๆ ไม่มีการสลับช่องอีก
@@ -928,6 +1257,7 @@ def background_calendar_reminder_worker():
                         group_target = FAMILY_GROUP_ID or ADMIN_USER_ID
                         direct_target = direct_reminder_target(summary)
                         sent_direct = False
+                        group_push_ok = False
                         if direct_target:
                             try:
                                 line_bot_api.push_message(direct_target, TextSendMessage(text=alert_text))
@@ -938,6 +1268,7 @@ def background_calendar_reminder_worker():
                         if not sent_direct and group_target:
                             try:
                                 line_bot_api.push_message(group_target, TextSendMessage(text=alert_text))
+                                group_push_ok = True
                             except LineBotApiError as e:
                                 if getattr(e, 'status_code', None) == 429:
                                     print(f"Reminder push blocked by monthly quota (429) for {key}")
@@ -946,6 +1277,13 @@ def background_calendar_reminder_worker():
                                     print(f"Reminder push failed for {key}: {e}")
                             except Exception as e:
                                 print(f"Reminder push failed for {key}: {e}")
+
+                        # รอบ 22 (ข ต่อ): สาขายกเว้นที่พ่วง list ทั้งวันไปกับเตือนเดี่ยว —
+                        # push เข้ากลุ่มสำเร็จแล้วจึงบันทึกสถานะทักทายของวันนี้ (ดูเหตุผลด้านบน)
+                        if claim_after_push_ids is not None and group_push_ok:
+                            if claim_greeting_state(FAMILY_GROUP_ID, today_str, claim_after_push_ids):
+                                greeted_today = True
+                                listed_ids = claim_after_push_ids
 
                         notified.add(key)
         except Exception as e:
@@ -1133,11 +1471,14 @@ def tomorrow_prep_lines(now):
         print(f"Tomorrow prep check failed: {e}")
         return []
 
-def today_schedule_lines(now):
+def today_schedule_entries(now):
     # สรุปกำหนดการ "วันนี้" แนบท้ายทักทายเช้า (รอบ 15 — นายเสนอเอง 2 พ.ย. 2569 หลังเห็น log เช้าวันเดียวกัน:
     # "ถ้ามีใครทักตอนเช้า ให้บอกสรุปหมายกำหนดการวันนี้ออกมาเลย แล้วพอถึงเวลาก็เตือนซ้ำตามปกติ")
-    # หลักคิด: สองวงทำคนละหน้าที่ — สรุปเช้าไว้ "วางแผนวัน" (เตรียมของ/เตรียมตัวแต่เช้า) ส่วนเตือนตามเวลาเดิม
-    # ไว้ "กันลืมจังหวะจริง" การเห็นซ้ำจึงเป็นเจตนา ไม่ใช่บั๊ก และวงเช้าเดินบน reply ที่พิสูจน์แล้วว่าเข้าชัวร์
+    # หลักคิดเดิม: สองวงทำคนละหน้าที่ — สรุปเช้าไว้ "วางแผนวัน" ส่วนเตือนตามเวลาไว้ "กันลืมจังหวะจริง"
+    # (อัปเดตรอบ 22: หลักสองวงยังอยู่ แต่ตัวเตือนจะไม่ยิงซ้ำสำหรับ "งานทั่วไปที่อยู่ใน list เช้าแล้ว"
+    # อีก เพราะฟีดแบ็กครอบครัวคือมันรกในวันงานซ้อน — ฟังก์ชันนี้จึงคืน (บรรทัด, event ID ที่แสดงจริง)
+    # ให้ผู้เรียกบันทึก ID ลง state ตัวเตือนจะข้ามเฉพาะ ID เหล่านั้นและเฉพาะเตือนธรรมดา [30] นาที
+    # ส่วนประเภทยกเว้น — หาหมอ/เตือนหลายชั้นที่สมาชิกสั่งไว้ — ยังยิงตามปกติตามหลักกันลืมเดิม)
     # กติกากรอง (กันสรุปกลายเป็นขยะจนคนเลิกอ่าน):
     # - ตัดงานประจำทุกวัน "เปิดไฟหน้าบ้าน 18:30" ออก — เคสจริงวันนี้ (2 พ.ย.) ปฏิทินมีแค่รายการนี้รายการเดียว
     #   ถ้าไม่ตัด ทักทายเช้าจะแถมสรุปที่ทุกคนรู้อยู่แล้วทุกวัน
@@ -1156,7 +1497,7 @@ def today_schedule_lines(now):
             singleEvents=True,
             orderBy='startTime'
         ).execute()
-        items = []
+        entries = []
         for e in res.get('items', []):
             summary = (e.get('summary') or '').strip()
             start_str = (e.get('start') or {}).get('dateTime')
@@ -1176,18 +1517,78 @@ def today_schedule_lines(now):
             # เพราะอาหนุ่ยต้องเตรียมก่อนรถมาถึง (ประวัติส่งจริง: 7 ถัง 210 บาททุก 14 วัน)
             if 'วันพระ' in summary:
                 clean = ' '.join(summary.replace('(ซื้อดอกไม้เตรียมไว้)', '').split())
-                items.append(f"• {start_dt.strftime('%H:%M')} น. {clean} — วันนี้วันพระครับ")
+                entries.append((f"• {start_dt.strftime('%H:%M')} น. {clean} — วันนี้วันพระครับ", e.get('id')))
             elif 'น้ำดื่มมาส่ง' in summary:
-                items.append(f"• {start_dt.strftime('%H:%M')} น. {summary} — เตรียมถังเปล่ากับเงินไว้ครับ")
+                entries.append((f"• {start_dt.strftime('%H:%M')} น. {summary} — เตรียมถังเปล่ากับเงินไว้ครับ", e.get('id')))
             else:
-                items.append(f"• {start_dt.strftime('%H:%M')} น. {summary}")
-        if len(items) > 5:
-            extra = len(items) - 5
-            items = items[:5] + [f"• …และอีก {extra} รายการครับ"]
-        return items
+                entries.append((f"• {start_dt.strftime('%H:%M')} น. {summary}", e.get('id')))
+        lines = [line for line, _ in entries[:5]]
+        ids = [eid for _, eid in entries[:5] if eid]
+        if len(entries) > 5:
+            lines.append(f"• …และอีก {len(entries) - 5} รายการครับ")
+        return lines, ids
     except Exception as e:
         print(f"Today schedule check failed: {e}")
-        return []
+        return [], []
+
+def today_schedule_lines(now):
+    # ชื่อเดิมที่โค้ดรอบ 15–21 เรียกใช้ — คืนเฉพาะบรรทัดข้อความ (ID รายการอยู่ที่ดี today_schedule_entries)
+    return today_schedule_entries(now)[0]
+
+def compose_greeting_lines(now):
+    # ประกอบข้อความทักทาย (อากาศ + วันนี้ต้องทำ + พรุ่งนี้ต้องเตรียม) ใช้ร่วมกัน 2 ทาง:
+    # ทักทายปกติเมื่อมีคนทักเช้า (ตอบกลับ reply) และทักทายสำรองฝั่งตัวเตือน (push รอบ 22)
+    # คืน (บรรทัดข้อความ, event ID ของรายการ "วันนี้ต้องทำ" ที่แสดงจริง — สำหรับบันทึก state รอบ 22)
+    header = "☀️ สวัสดีตอนเช้าครับทุกคน" if now.hour < 12 else "☀️ สวัสดีครับทุกคน"
+    lines = [header]
+    for name, lat, lon in WEATHER_CITIES:
+        w = fetch_city_weather(name, lat, lon)
+        if w:
+            lines.append(w)
+    # รอบ 15: แนบสรุปกำหนดการวันนี้ — ไม่มีรายการที่ต้องบอก = ไม่เติมหัวข้อเลย ทักทายจะได้สั้นเหมือนเดิม
+    sched, listed_ids = today_schedule_entries(now)
+    if sched:
+        lines.append("📌 วันนี้ต้องทำครับ")
+        lines.extend(sched)
+    # รอบ 17: แนบหัวข้อ "พรุ่งนี้ต้องเตรียม" — ไม่มีเรื่องต้องเตรียม = ไม่เติมหัวข้อเลยเช่นกัน
+    prep = tomorrow_prep_lines(now)
+    if prep:
+        lines.append("🧺 พรุ่งนี้ต้องเตรียมครับ")
+        lines.extend(prep)
+    return lines, listed_ids
+
+def send_greeting_push(now):
+    # รอบ 22 (fallback ของทักทาย): เช้านี้ยังไม่มีใครทักในกลุ่มเลย แต่ถึงเวลาเตือนแรกของวันแล้ว —
+    # ตัวเตือนเรียกฟังก์ชันนี้เพื่อ "อัปเกรด" push ครั้งนั้นให้เป็นทักทาย + list ทั้งวันแทนเตือนเดี่ยว
+    # (ยังเป็น push ครั้งเดียว โควตาเท่าเดิม ไม่ได้เพิ่ม push ทักทายแยกตามหลักรอบ 17)
+    # คืน list ของ event ID ที่ list ไป หรือ None ถ้าวันนี้ทักไปแล้ว/ส่งไม่สำเร็จ —
+    # ผู้เรียก (ตัวเตือน) จะได้ส่งเตือนเดี่ยวของรายการนั้นตามปกติแทน: ทักทายไม่มา เตือนต้องไม่หาย
+    group_id = FAMILY_GROUP_ID
+    if not group_id:
+        return None
+    today = now.strftime('%Y-%m-%d')
+    lines, listed_ids = compose_greeting_lines(now)
+    if not claim_greeting_state(group_id, today, listed_ids):
+        return None
+    try:
+        line_bot_api.push_message(group_id, TextSendMessage(text="\n".join(lines)))
+        print(f"Morning greeting sent via first-reminder push for {today}")
+        return listed_ids
+    except Exception as e:
+        print(f"Greeting push failed: {e}")
+        release_greeting_state(group_id)
+        return None
+
+def reminder_skippable_by_greeting(event, minutes, offsets):
+    # รอบ 22: เตือนตัวนี้ข้ามได้เพราะอยู่ใน list เช้าแล้วใช่ไหม — ข้ามเฉพาะ "เตือนธรรมดาสุด":
+    # เตือนครั้งเดียวก่อน 30 นาที (ค่าเริ่มต้นของระบบ) ของงานทั่วไปเท่านั้น
+    # ยกเว้นเด็ดขาด: (1) เตือนหลายชั้นหรือเวลาเตือนอื่น = สมาชิกสั่งไว้ชัด/ระบบตั้งให้งานสำคัญ
+    # (2) นัดหาหมอ/ใบนัด — เตือน 30 นาทีของงานกลุ่มนี้คือตัวกำหนดเวลาออกบ้าน พลาดแล้วมีต้นทุนจริง
+    if minutes != 30 or list(offsets) != [30]:
+        return False
+    if is_hospital_appointment(event.get('summary', ''), event.get('description', '')):
+        return False
+    return True
 
 def maybe_morning_greeting(event):
     # เรียกจากจุดที่แน่ใจว่าบอทยังไม่ได้ใช้ reply token ของข้อความนั้นเท่านั้น (ทุกโฟลว์ที่ตอบแล้วจะ return/ข้ามไปก่อน)
@@ -1231,24 +1632,11 @@ def maybe_morning_greeting(event):
             claimed = True
             if state_ok:
                 persisted_claim = write_persisted_greeting(group_id, today)
-        lines = ["☀️ สวัสดีตอนเช้าครับทุกคน"]
-        for name, lat, lon in WEATHER_CITIES:
-            w = fetch_city_weather(name, lat, lon)
-            if w:
-                lines.append(w)
-        # รอบ 15: แนบสรุปกำหนดการวันนี้ (นายเสนอ 2 พ.ย. — ดู today_schedule_lines ด้านบน)
-        # ไม่มีรายการที่ต้องบอก = ไม่เติมหัวข้อเลย ทักทายจะได้สั้นเหมือนเดิม
-        sched = today_schedule_lines(now)
-        if sched:
-            lines.append("📌 วันนี้ต้องทำครับ")
-            lines.extend(sched)
-        # รอบ 17: แนบหัวข้อ "พรุ่งนี้ต้องเตรียม" (แทนบรรทัดวันพระพรุ่งนี้เส้นเดียวของรอบ 14 —
-        # ดู tomorrow_prep_lines ด้านบน) ไม่มีเรื่องต้องเตรียม = ไม่เติมหัวข้อเลย ทักทายจะได้สั้น
-        prep = tomorrow_prep_lines(now)
-        if prep:
-            lines.append("🧺 พรุ่งนี้ต้องเตรียมครับ")
-            lines.extend(prep)
+        lines, listed_ids = compose_greeting_lines(now)
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(lines)))
+        # รอบ 22: บันทึก ID รายการที่เพิ่ง list ไปลง state — ตัวเตือนจะข้ามเตือน 30 นาที
+        # ของรายการเหล่านั้น (เฉพาะเตือนธรรมดาของงานทั่วไป ดู reminder_skippable_by_greeting)
+        write_greeting_listed(group_id, today, listed_ids)
         print(f"Morning greeting sent for {today}")
     except Exception as e:
         print(f"Morning greeting error: {e}")
@@ -2705,12 +3093,38 @@ def handle_text_message(event):
                         f"🔔 แจ้งเตือนล่วงหน้า: {lead_text}"
                         f"{recur_text}"
                     )
-                    if should_ask_departure(summary, msg_text, recurrence):
+                    stated_dep = extract_stated_departure(msg_text)
+                    if stated_dep and not recurrence:
+                        # รอบ 21: ผู้สั่งบอกเวลาออกบ้านมาในข้อความเดียวกันแล้ว (เช่น "ล้อหมุน 9.50 น.")
+                        # ไม่ถามซ้ำ — จดเวลาออกบ้านลงนัดที่เพิ่งสร้างให้เลย (เคสจริง 6 พ.ย. 2569:
+                        # บอทถามซ้ำทั้งที่อาหนุ่ยบอกแล้ว จนไม่มีใครตอบคำถามนั้น)
+                        hh, mm = stated_dep
+                        if LAST_EVENT.get('event_id') and record_departure_on_event(LAST_EVENT['event_id'], hh, mm):
+                            reply_text += f"\n🚗 เวลาออกบ้าน: {hh:02d}:{mm:02d} น. (ตามที่แจ้งไว้ในข้อความ จดลงนัดให้แล้วครับ)"
+                        elif should_ask_departure(summary, msg_text, recurrence):
+                            # จดลงนัดไม่สำเร็จ (เช่น ปฏิทินตอบช้า) — กลับไปถามตามโฟลว์เดิมดีกว่าปล่อยเงียบ
+                            remember_departure_question(summary, qa_scope(event))
+                            reply_text += f"\n{DEPARTURE_QUESTION}"
+                    elif should_ask_departure(summary, msg_text, recurrence):
                         remember_departure_question(summary, qa_scope(event))
                         reply_text += f"\n{DEPARTURE_QUESTION}"
                 else:
                     reply_text = "❌ เกิดข้อผิดพลาดในการบันทึกปฏิทิน"
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+                return
+
+        # 1.5 ร่างนัดรอบถัดไปจากข้อความรายงาน (รอบ 21 — ดู handle_followup_report)
+        # วางไว้หลังขั้น 1 เพราะข้อความที่เป็นคำสั่งนัดจริงต้องลงนัดก่อน ส่วนข้อความคุยทั่วไป
+        # ที่ไม่ใช่คำสั่ง (รายงานผล + รอบต่อไป) จะมาถึงจุดนี้ — ถ้าโฟลว์นี้ตอบ (เสนอร่าง/
+        # ยืนยันร่าง) ให้จบข้อความนี้เลย ไม่ต้องไหลไปลง log ซ้ำแบบข้อความที่บอทตอบแล้วข้ออื่น ๆ
+        if not (qa_answer or plan_handled or travel_handled or appt_handled):
+            try:
+                followup_reply = handle_followup_report(event, msg_text)
+            except Exception as e:
+                print(f"Followup report flow error: {e}")
+                followup_reply = None
+            if followup_reply:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=followup_reply))
                 return
 
         # 2. บันทึกข้อความทั่วไปลง Google Sheets
