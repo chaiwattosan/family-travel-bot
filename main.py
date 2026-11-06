@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-11-06-r18 — รอบ 18 (แก้บั๊กจากเคสจริง 5 พ.ย. 2569 สองจุด: (1) ทักทายเช้าส่งซ้ำ 2 รอบในวินาทีเดียวกัน เพราะแม่หน่อยส่งข้อความติดกัน 2 อันห่างกัน 2 วินาที แล้วธง "ทักไปแล้ว" ถูกตั้งหลังดึงข้อมูลอากาศเสร็จ — เปลี่ยนเป็นจองสิทธิ์ทักก่อนเริ่มดึงข้อมูล + ล็อกกันประมวลผลพร้อมกัน; (2) log วันเดียวกันมี Gemini ตอบ 503 UNAVAILABLE (โมเดลแน่น) เป็นช่วง ๆ ช่วงบ่าย–ค่ำ แต่ retry เดิมเว้นแค่ 2 วินาทีสั้นกว่า spike — เพิ่มตัวช่วยคำนวณเวลารอ: เจอ 503 ให้เว้น 5/12 วินาทีแทน)
+# BOT VERSION: 2026-11-06-r19 — รอบ 19 (ชิมลาง "ยิงเตือนตรงหาคนที่รับผิดชอบ" เพื่อประหยัดโควตา push: ตัวเลขจริงจาก OA Manager 6 พ.ย. 2569 ใช้ push ไป 70/300 ใน 5 วันแรกทั้งที่ยิงจริงแค่ ~7 ครั้ง เพราะ LINE นับ push เข้ากลุ่มตามจำนวนคนรับ (กลุ่ม 11 คนรวมบอท = คนรับ 10 → ครั้งละ 10 โควตา) เปิดไฟอย่างเดียว 30 วัน = 300 = โควตาทั้งเดือน; รอบนี้เฉพาะอีเวนต์ "เปิดไฟ" (งานประจำของอากง) จะยิงตรงหาผู้รับผิดชอบจาก env LIGHT_REMINDER_USER_ID (นับ 1/ครั้ง) ยิงตรงไม่ผ่านให้ถอยไปยิงกลุ่มตามเดิมในรอบเดียวกัน ส่วนเรื่องรวมของทั้งบ้านยังยิงเข้ากลุ่มเหมือนเดิม — ดู DIRECT_REMINDER_ROUTES ท้ายไฟล์ส่วนตัวเตือน)
 import re
 import json
 import time
@@ -740,6 +740,30 @@ def reminder_due(fire_time, now, grace_minutes=5):
     # ถึงเวลาเตือนหรือยัง: ยิงได้ตั้งแต่ fire_time ถึง fire_time + grace (เผื่อรอบเช็กคลาด/process เพิ่งตื่น)
     return fire_time <= now <= fire_time + timedelta(minutes=grace_minutes)
 
+# ===== รอบ 19: เตือนเฉพาะเรื่อง ยิงตรงหาคนที่รับผิดชอบ (ชิมลางกับ "เปิดไฟ" → อากง) =====
+# เคสจริง/ตัวเลขจริง 6 พ.ย. 2569: นายเปิด OA Manager เช็กยอด push เดือน พ.ย. ใช้ไป 70 จาก 300
+# ใน 5 วันแรก ทั้งที่ตัวเตือนยิงจริงแค่ ~7 ครั้ง (เปิดไฟ 5 เย็น + วันพระสไตล์เก่า 2 ครั้ง) —
+# เพราะ LINE นับ push เข้ากลุ่ม "ตามจำนวนคนที่ได้รับ" กลุ่มบ้านตั้งทองมีสมาชิก 11 รวมตัวบอท
+# คนรับจริง 10 คน ยิง 1 ครั้งจึงเสีย 10 โควตา และเปิดไฟอย่างเดียว 30 วัน = 300 = โควตาฟรี
+# ทั้งเดือนพอดี ยังไม่รวมนัดอื่น นายจึงเคาะให้ลอง: งานประจำที่เป็นของคนเดียว ให้ยิงตรงหาคนนั้น
+# (นับ 1 ต่อครั้ง) เริ่มชิมลางเฉพาะ "เปิดไฟหน้าบ้าน" ซึ่งเป็นงานของอากง — คนเปิดไฟตัวจริงที่
+# ตอบรับเตือนในกลุ่มเองทุกเย็น ("เปิดไฟละครับ") ถ้าผลดีค่อยเพิ่มเรื่องอื่นเข้าเส้นทางนี้ทีหลัง
+# userId ของผู้รับตั้งผ่าน env บน Render อย่างเดียว ไม่ฝังค่าในโค้ด (หลักเดียวกับ credentials
+# ชุดอื่นของระบบนี้ และกันส่งผิดคนถ้าวันหลังเปลี่ยนผู้รับผิดชอบ) — ถ้ายังไม่ตั้ง env ตัวที่ตรงไว้
+# พฤติกรรมจะเท่าเดิมทุกอย่างคือยิงเข้ากลุ่ม เพราะ direct_reminder_target คืน None
+DIRECT_REMINDER_ROUTES = [
+    ('เปิดไฟ', 'LIGHT_REMINDER_USER_ID'),
+]
+
+def direct_reminder_target(summary):
+    """คืน userId ปลายทางยิงตรงของอีเวนต์นี้ หรือ None ถ้าเรื่องนี้ให้ยิงเข้ากลุ่มตามปกติ"""
+    for keyword, env_name in DIRECT_REMINDER_ROUTES:
+        if keyword in (summary or ''):
+            uid = os.environ.get(env_name)
+            if uid:
+                return uid
+    return None
+
 def background_calendar_reminder_worker():
     notified = set()
     # รอบแรกหลัง process เริ่ม/รีสตาร์ต: เช็กทันทีไม่ต้องรอ 60 วิ + เผื่อย้อนหลัง 15 นาที
@@ -830,13 +854,28 @@ def background_calendar_reminder_worker():
                             f"🕒 เริ่ม: {start_dt.strftime('%d/%m %H:%M น.')} ({lead})"
                         )
 
-                        # ปลายทาง: กลุ่มครอบครัว (หรือแอดมินถ้าไม่ได้ตั้งกลุ่มไว้) — ระบบเหลือ Bot A ช่องเดียว
-                        # (ช่องสำรองถูกลบไปแล้ว ดูคอมเมนต์เก็บกวาดรอบ 9 ต้นไฟล์) ถ้าเจอ 429 = โควตา push
-                        # ของเดือนนั้นหมด ให้บันทึก log ไว้ชัด ๆ ไม่มีการสลับช่องอีก
-                        target = FAMILY_GROUP_ID or ADMIN_USER_ID
-                        if target:
+                        # ปลายทางปกติ: กลุ่มครอบครัว (หรือแอดมินถ้าไม่ได้ตั้งกลุ่มไว้) — ระบบเหลือ Bot A
+                        # ช่องเดียว (ช่องสำรองถูกลบไปแล้ว ดูคอมเมนต์เก็บกวาดรอบ 9 ต้นไฟล์) ถ้าเจอ 429 =
+                        # โควตา push ของเดือนนั้นหมด ให้บันทึก log ไว้ชัด ๆ ไม่มีการสลับช่องอีก
+                        # รอบ 19: ถ้าเรื่องนี้มีเส้นทางยิงตรง (ดู DIRECT_REMINDER_ROUTES ด้านบน เช่น
+                        # เปิดไฟ → อากง) ให้ลองยิงตรงก่อน — สำเร็จ = เสียโควตาแค่ 1 แทน 10 และให้ log
+                        # ไว้ชัด ๆ (ปกติ push สำเร็จไม่มี log เลย) นายจะได้ตรวจจาก Render log ได้ว่า
+                        # เย็นนี้เตือนไปทางช่องตรงจริง ถ้ายิงตรงไม่ผ่านด้วยเหตุใดก็ตาม (ผู้รับยังไม่ได้
+                        # แอดบอทเป็นเพื่อน/บล็อก/เครือข่ายสะดุด) ให้ถอยไปยิงกลุ่มตามเดิมในรอบเดียวกัน
+                        # เตือนต้องไม่หายเพราะการทดลองประหยัดโควตา
+                        group_target = FAMILY_GROUP_ID or ADMIN_USER_ID
+                        direct_target = direct_reminder_target(summary)
+                        sent_direct = False
+                        if direct_target:
                             try:
-                                line_bot_api.push_message(target, TextSendMessage(text=alert_text))
+                                line_bot_api.push_message(direct_target, TextSendMessage(text=alert_text))
+                                sent_direct = True
+                                print(f"Reminder push sent DIRECT (counts as 1) for {key}")
+                            except Exception as e:
+                                print(f"Reminder direct push failed for {key}: {e} - falling back to group")
+                        if not sent_direct and group_target:
+                            try:
+                                line_bot_api.push_message(group_target, TextSendMessage(text=alert_text))
                             except LineBotApiError as e:
                                 if getattr(e, 'status_code', None) == 429:
                                     print(f"Reminder push blocked by monthly quota (429) for {key}")
