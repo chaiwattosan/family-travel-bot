@@ -1,5 +1,5 @@
 import os
-# BOT VERSION: 2026-11-03-r17 — รอบ 17 (ปรับการแจ้งเตือนตามฟีดแบ็กครอบครัว 3 พ.ย. 2569: @tag บอท = คุยกับบอท ตอบเลยไม่ต้องมีรูปคำถาม, ทักทายเช้าแยกหัวข้อ "วันนี้ต้องทำ/พรุ่งนี้ต้องเตรียม" + แยกวันพระเตรียมของออกจากวันพระจริง, ตัด push รายตัวของวันพระ/น้ำดื่มมาส่งออกให้สรุปเช้ารับจบ; ไม่ทำ push 06:00 เพราะเปลืองโควตา — นายเคาะให้รอคนทักเช้าเหมือนเดิม)
+# BOT VERSION: 2026-11-06-r18 — รอบ 18 (แก้บั๊กจากเคสจริง 5 พ.ย. 2569 สองจุด: (1) ทักทายเช้าส่งซ้ำ 2 รอบในวินาทีเดียวกัน เพราะแม่หน่อยส่งข้อความติดกัน 2 อันห่างกัน 2 วินาที แล้วธง "ทักไปแล้ว" ถูกตั้งหลังดึงข้อมูลอากาศเสร็จ — เปลี่ยนเป็นจองสิทธิ์ทักก่อนเริ่มดึงข้อมูล + ล็อกกันประมวลผลพร้อมกัน; (2) log วันเดียวกันมี Gemini ตอบ 503 UNAVAILABLE (โมเดลแน่น) เป็นช่วง ๆ ช่วงบ่าย–ค่ำ แต่ retry เดิมเว้นแค่ 2 วินาทีสั้นกว่า spike — เพิ่มตัวช่วยคำนวณเวลารอ: เจอ 503 ให้เว้น 5/12 วินาทีแทน)
 import re
 import json
 import time
@@ -119,6 +119,17 @@ def get_user_display_name(user_id, group_id=None):
         return name
     return "Unknown User"
 
+def gemini_retry_delay(attempt, error):
+    # รอบ 18 — เคสจริง 5 พ.ย. 2569: log มี Gemini ตอบ 503 UNAVAILABLE ("model is currently
+    # experiencing high demand") ตอน 15:06, 18:22 และ 19:00–19:03 แต่ retry เดิมของทุกฟังก์ชัน
+    # เว้นแค่ 2 วินาทีแล้วลองใหม่ทันที 3 รอบจบในไม่กี่วินาที — สั้นกว่าระยะที่ฝั่งโมเดลแน่นอยู่มาก
+    # เลยพลาดทุกรอบทั้งที่รออีกนิดอาจผ่าน หลักการ: error แบบ "เซิร์ฟเวอร์แน่นชั่วคราว" (503)
+    # ต้องเว้นจังหวะให้นานขึ้นแบบขั้นบันได (5 วิ แล้ว 12 วิ) ส่วน error อื่นคงรอ 2 วิเท่าเดิม
+    # เพราะส่วนใหญ่ไม่ใช่เรื่องรอแล้วหาย (เช่น 404 หรือ JSON พัง รอไปก็ไม่ช่วย)
+    if '503' in str(error) or 'UNAVAILABLE' in str(error):
+        return (5, 12, 12)[min(attempt, 2)]
+    return 2
+
 def analyze_text_with_gemini(text):
     if not gemini_client:
         return "บันทึกทั่วไป", text
@@ -143,7 +154,7 @@ def analyze_text_with_gemini(text):
             return "บันทึกทั่วไป", text
         except Exception as e:
             print(f"Gemini attempt {attempt+1} error: {e}")
-            time.sleep(2)
+            time.sleep(gemini_retry_delay(attempt, e))
     return "บันทึกทั่วไป", text
 
 def analyze_image_with_gemini(image_bytes):
@@ -435,7 +446,7 @@ def parse_calendar_intent(text):
             return json.loads(text_resp)
         except Exception as e:
             print(f"Calendar intent parse attempt {attempt+1} error: {e}")
-            time.sleep(2)
+            time.sleep(gemini_retry_delay(attempt, e))
     return None
 
 def add_to_calendar(summary, start_time_str, reminder_minutes_list=None, recurrence=None, recurrence_days=None):
@@ -853,6 +864,10 @@ reminder_thread.start()
 # ค่า us_aqi ดิบจาก API ไม่สอดคล้องกับ PM2.5 ของมันเอง (ฝุ่นสูงสุด 28 µg/m³ แต่ AQI โผล่ 175)
 # จึงรายงาน PM2.5 เป็น µg/m³ ตรง ๆ และจัดระดับด้วยเกณฑ์ไทย ไม่ใช้ค่าดัชนีสำเร็จรูปที่ไม่น่าเชื่อ
 MORNING_GREETED = {'date': None, 'group': None}
+# รอบ 18: ล็อกสำหรับจองสิทธิ์ทักทายเช้า — เคสจริง 5 พ.ย. 2569 ข้อความเช้า 2 อันมาติดกัน
+# ห่างกัน 2 วินาทีถูกประมวลผลพร้อมกันสองเส้น ทั้งคู่เช็กธงก่อนอีกฝ่ายตั้งธงทัน (ธงเดิมตั้งหลัง
+# ดึงอากาศเสร็จ ซึ่งกินเวลาหลายวินาที) เลยทักซ้ำ 2 รอบ ดู maybe_morning_greeting ด้านล่าง
+MORNING_GREETING_LOCK = threading.Lock()
 WEATHER_CITIES = [
     ('เชียงใหม่', 18.7883, 98.9853),
     ('อยุธยา', 14.3532, 100.5689),
@@ -1076,6 +1091,17 @@ def today_schedule_lines(now):
 def maybe_morning_greeting(event):
     # เรียกจากจุดที่แน่ใจว่าบอทยังไม่ได้ใช้ reply token ของข้อความนั้นเท่านั้น (ทุกโฟลว์ที่ตอบแล้วจะ return/ข้ามไปก่อน)
     # สถานะจำในหน่วยความจำ: ถ้าเครื่องรีสตาร์ตกลางเช้า อาจทักซ้ำได้อีกครั้งในเช้าเดียวกัน — ยอมรับในฉบับแรกนี้
+    # รอบ 18 — เคสจริง 5 พ.ย. 2569 (บั๊กทักทายซ้ำ 2 รอบ): แม่หน่อยส่งข้อความเช้าติดกัน 2 อัน
+    # ห่างกัน 2 วินาที (09:12:54 และ 09:12:56) log ขึ้น "Morning greeting sent" สองครั้งใน
+    # วินาทีเดียวกัน (09:13:12) — ต้นเหตุคือโค้ดเดิมตั้งธง MORNING_GREETED "หลัง" ดึงข้อมูล
+    # อากาศ+ตารางเสร็จ (งานที่กินเวลาหลายวินาที) ระหว่างนั้นข้อความที่สองซึ่งประมวลผลพร้อมกัน
+    # อีกเส้นเข้ามาเช็กธงก็ยังเห็นเป็นค่าว่าง เลยผ่านด่านทั้งคู่ หลักแก้: "จองสิทธิ์ก่อนทำงาน"
+    # คือล็อกแล้วตั้งธงทันทีตั้งแต่ต้นฟังก์ชัน ใครมาทีหลังเห็นธงแล้วถอยเลย ส่วนงานดึงอากาศ
+    # ทำนอกล็อกตามปกติ (ไม่ต้องให้ใครรอ) — ถ้าสร้างข้อความหรือส่งไม่สำเร็จจริง ๆ ค่อยคืนสิทธิ์
+    # ใน except ให้ข้อความถัดไปของเช้านั้นลองทักใหม่ได้ ไม่ใช่เสียสิทธิ์ทักไปทั้งวัน
+    claimed = False
+    today = None
+    group_id = None
     try:
         group_id = getattr(event.source, 'group_id', None)
         if not group_id or (FAMILY_GROUP_ID and group_id != FAMILY_GROUP_ID):
@@ -1084,8 +1110,12 @@ def maybe_morning_greeting(event):
         if not (5 <= now.hour < 11):
             return
         today = now.strftime('%Y-%m-%d')
-        if MORNING_GREETED['date'] == today and MORNING_GREETED['group'] == group_id:
-            return
+        with MORNING_GREETING_LOCK:
+            if MORNING_GREETED['date'] == today and MORNING_GREETED['group'] == group_id:
+                return
+            MORNING_GREETED['date'] = today
+            MORNING_GREETED['group'] = group_id
+            claimed = True
         lines = ["☀️ สวัสดีตอนเช้าครับทุกคน"]
         for name, lat, lon in WEATHER_CITIES:
             w = fetch_city_weather(name, lat, lon)
@@ -1103,12 +1133,16 @@ def maybe_morning_greeting(event):
         if prep:
             lines.append("🧺 พรุ่งนี้ต้องเตรียมครับ")
             lines.extend(prep)
-        MORNING_GREETED['date'] = today
-        MORNING_GREETED['group'] = group_id
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(lines)))
         print(f"Morning greeting sent for {today}")
     except Exception as e:
         print(f"Morning greeting error: {e}")
+        if claimed:
+            # คืนสิทธิ์ที่จองไว้ เพราะรอบนี้ส่งไม่สำเร็จ — ข้อความถัดไปในเช้าเดียวกันจะได้ลองใหม่
+            with MORNING_GREETING_LOCK:
+                if MORNING_GREETED['date'] == today and MORNING_GREETED['group'] == group_id:
+                    MORNING_GREETED['date'] = None
+                    MORNING_GREETED['group'] = None
 
 # ===== รอบ 13: เมนูฟุตบอลไทยลีก 1 แบบ Flex ให้อากง =====
 # ที่มา: อากงชอบดูบอลมาก เชียร์ 2 ทีมคือ อยุธยา ยูไนเต็ด กับ ลำพูน วอริเออร์ — นายออกแบบเอง (31 ต.ค. 2569):
