@@ -1,5 +1,6 @@
 import os
-# BOT VERSION: 2026-11-06-r19 — รอบ 19 (ชิมลาง "ยิงเตือนตรงหาคนที่รับผิดชอบ" เพื่อประหยัดโควตา push: ตัวเลขจริงจาก OA Manager 6 พ.ย. 2569 ใช้ push ไป 70/300 ใน 5 วันแรกทั้งที่ยิงจริงแค่ ~7 ครั้ง เพราะ LINE นับ push เข้ากลุ่มตามจำนวนคนรับ (กลุ่ม 11 คนรวมบอท = คนรับ 10 → ครั้งละ 10 โควตา) เปิดไฟอย่างเดียว 30 วัน = 300 = โควตาทั้งเดือน; รอบนี้เฉพาะอีเวนต์ "เปิดไฟ" (งานประจำของอากง) จะยิงตรงหาผู้รับผิดชอบจาก env LIGHT_REMINDER_USER_ID (นับ 1/ครั้ง) ยิงตรงไม่ผ่านให้ถอยไปยิงกลุ่มตามเดิมในรอบเดียวกัน ส่วนเรื่องรวมของทั้งบ้านยังยิงเข้ากลุ่มเหมือนเดิม — ดู DIRECT_REMINDER_ROUTES ท้ายไฟล์ส่วนตัวเตือน)
+# BOT VERSION: 2026-11-06-r20 — รอบ 20 (เก็บธง "ทักทายเช้าแล้ว" ลง Google Sheet ให้รอดข้ามการรีสตาร์ต: เคสจริงเช้า 6 พ.ย. 2569 ทักทายออก 2 รอบในวันเดียว — รอบแรก 07:25 จากการทดสอบหลัง deploy r18, รอบสอง 09:15 ตอนสมาชิกส่งข้อความแรกหลังมีการ deploy r19 ตอน 07:55 เพราะธงเดิมเป็นตัวแปรในหน่วยความจำ รีสตาร์ตแล้วหายหมด; รอบนี้เช็ก/จองสิทธิ์ในชีต "bot_state" ของสเปรดชีตเล่มเดิมก่อนทัก อ่าน/เขียนชีตไม่ได้ให้ถอยไปใช้ธงหน่วยความจำแบบรอบ 18 — ดู read_persisted_greeting / write_persisted_greeting และ maybe_morning_greeting)
+# (ประวัติรอบ 19: 2026-11-06-r19 — รอบ 19 (ชิมลาง "ยิงเตือนตรงหาคนที่รับผิดชอบ" เพื่อประหยัดโควตา push: ตัวเลขจริงจาก OA Manager 6 พ.ย. 2569 ใช้ push ไป 70/300 ใน 5 วันแรกทั้งที่ยิงจริงแค่ ~7 ครั้ง เพราะ LINE นับ push เข้ากลุ่มตามจำนวนคนรับ (กลุ่ม 11 คนรวมบอท = คนรับ 10 → ครั้งละ 10 โควตา) เปิดไฟอย่างเดียว 30 วัน = 300 = โควตาทั้งเดือน; รอบนี้เฉพาะอีเวนต์ "เปิดไฟ" (งานประจำของอากง) จะยิงตรงหาผู้รับผิดชอบจาก env LIGHT_REMINDER_USER_ID (นับ 1/ครั้ง) ยิงตรงไม่ผ่านให้ถอยไปยิงกลุ่มตามเดิมในรอบเดียวกัน ส่วนเรื่องรวมของทั้งบ้านยังยิงเข้ากลุ่มเหมือนเดิม — ดู DIRECT_REMINDER_ROUTES ท้ายไฟล์ส่วนตัวเตือน)
 import re
 import json
 import time
@@ -80,6 +81,67 @@ def get_sheet():
     client = gspread.authorize(creds)
     sheet_id = os.environ.get('GOOGLE_SHEET_ID')
     return client.open_by_key(sheet_id).worksheet("log")
+
+# ===== รอบ 20: เก็บธง "ทักทายเช้าแล้ว" ลง Google Sheet (ที่เก็บถาวร รอดข้ามรีสตาร์ต) =====
+# เคสจริงเช้า 6 พ.ย. 2569: ทักทายออก 2 รอบในวันเดียว — รอบแรก 07:25 (นายทดสอบหลัง deploy r18)
+# รอบสอง 09:15 ตอนแม่หน่อยส่งเมนูอาหาร ทั้งที่ข้อความของแม่หน่อย 2 อันติดกันห่าง 1 วินาทีไม่ได้ทำซ้ำ
+# (ล็อกจองสิทธิ์ของรอบ 18 ทำงานถูก) ต้นเหตุคือระหว่างนั้น deploy r19 ตอน 07:55 service รีสตาร์ต
+# ธง MORNING_GREETED เป็น dict ในหน่วยความจำจึงหายหมด บอทเข้าใจว่าวันนี้ยังไม่ได้ทัก
+# บทเรียน: สถานะที่ต้องจำข้ามการรีสตาร์ต ห้ามเก็บในหน่วยความจำอย่างเดียว
+# วิธีเก็บ: ใช้สเปรดชีตเล่มเดียวกับที่บอทใช้อยู่แล้ว (GOOGLE_SHEET_ID) เพิ่มชีตชื่อ "bot_state"
+# เก็บคู่ key/value — key = "morning_greeted:<group_id>", value = วันที่ล่าสุดที่ทัก (YYYY-MM-DD)
+# ไม่มีชีตให้สร้างเองตอนใช้ครั้งแรก ไม่ต้องตั้ง env เพิ่ม ไม่ต้องขอสิทธิ์ใหม่ (scope spreadsheets
+# อยู่ใน SCOPES ตั้งแต่เดิม) ส่วนการจองสิทธิ์ยังทำใต้ล็อกตัวเดิมและจอง "ก่อน" ดึงอากาศเหมือนรอบ 18
+# แค่ขยายขอบเขตจากในโปรเซสเดียวเป็นข้ามโปรเซส/ข้ามการ deploy
+# โหมดเสื่อม: อ่าน/เขียนชีตพลาด (เน็ตหลุด ฯลฯ) ให้ถอยไปใช้ธงหน่วยความจำอย่างเดียวแบบรอบ 18
+# พร้อมพิมพ์เตือนใน log — ยอมรับความเสี่ยงซ้ำเฉพาะกรณีชีตล่มพร้อมกับรีสตาร์ตในเช้าเดียวกัน
+# ดีกว่าบล็อกการทักทายทั้งเช้าเพราะที่เก็บสถานะล่ม
+
+STATE_WORKSHEET_NAME = "bot_state"
+
+def get_state_worksheet():
+    creds = get_google_creds()
+    client = gspread.authorize(creds)
+    spreadsheet = client.open_by_key(os.environ.get('GOOGLE_SHEET_ID'))
+    try:
+        return spreadsheet.worksheet(STATE_WORKSHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = spreadsheet.add_worksheet(title=STATE_WORKSHEET_NAME, rows=100, cols=3)
+        ws.append_row(['key', 'value', 'updated_at'])
+        return ws
+
+def _greeting_state_key(group_id):
+    return f"morning_greeted:{group_id}"
+
+def read_persisted_greeting(group_id):
+    # คืนค่า (ok, date_str): ok=False = อ่านชีตไม่ได้ (ผู้เรียกต้องถอยไปใช้หน่วยความจำ)
+    # date_str=None = อ่านได้ แต่กลุ่มนี้ยังไม่มีบันทึก/ถูกคืนสิทธิ์แล้ว
+    try:
+        ws = get_state_worksheet()
+        for row in ws.get_all_values()[1:]:
+            if row and row[0] == _greeting_state_key(group_id):
+                return True, (row[1] if len(row) > 1 and row[1] else None)
+        return True, None
+    except Exception as e:
+        print(f"Greeting state read failed (fallback to memory): {e}")
+        return False, None
+
+def write_persisted_greeting(group_id, date_str):
+    # บันทึกวันที่ทักล่าสุดของกลุ่ม (date_str='' = คืนสิทธิ์ตอนส่งไม่สำเร็จ) คืน True ถ้าเขียนสำเร็จ
+    try:
+        ws = get_state_worksheet()
+        key = _greeting_state_key(group_id)
+        now_s = datetime.now(pytz.timezone('Asia/Bangkok')).strftime('%Y-%m-%d %H:%M:%S')
+        for idx, row in enumerate(ws.get_all_values()[1:], start=2):
+            if row and row[0] == key:
+                ws.update_cell(idx, 2, date_str)
+                ws.update_cell(idx, 3, now_s)
+                return True
+        ws.append_row([key, date_str, now_s])
+        return True
+    except Exception as e:
+        print(f"Greeting state write failed: {e}")
+        return False
 
 def get_calendar_service():
     creds = get_google_creds()
@@ -1129,7 +1191,9 @@ def today_schedule_lines(now):
 
 def maybe_morning_greeting(event):
     # เรียกจากจุดที่แน่ใจว่าบอทยังไม่ได้ใช้ reply token ของข้อความนั้นเท่านั้น (ทุกโฟลว์ที่ตอบแล้วจะ return/ข้ามไปก่อน)
-    # สถานะจำในหน่วยความจำ: ถ้าเครื่องรีสตาร์ตกลางเช้า อาจทักซ้ำได้อีกครั้งในเช้าเดียวกัน — ยอมรับในฉบับแรกนี้
+    # (เดิมสถานะจำในหน่วยความจำอย่างเดียวและยอมรับว่าถ้าเครื่องรีสตาร์ตกลางเช้าอาจทักซ้ำ — รอบ 20
+    # ยกเลิกข้อยอมรับนั้นแล้ว เพราะเกิดจริงเมื่อ 6 พ.ย. 2569 จากการ deploy กลางเช้า ดูคอมเมนต์รอบ 20
+    # ที่ read_persisted_greeting ด้านบน: ตอนนี้เช็ก/จองสิทธิ์ใน Google Sheet ควบคู่กับหน่วยความจำ)
     # รอบ 18 — เคสจริง 5 พ.ย. 2569 (บั๊กทักทายซ้ำ 2 รอบ): แม่หน่อยส่งข้อความเช้าติดกัน 2 อัน
     # ห่างกัน 2 วินาที (09:12:54 และ 09:12:56) log ขึ้น "Morning greeting sent" สองครั้งใน
     # วินาทีเดียวกัน (09:13:12) — ต้นเหตุคือโค้ดเดิมตั้งธง MORNING_GREETED "หลัง" ดึงข้อมูล
@@ -1139,6 +1203,7 @@ def maybe_morning_greeting(event):
     # ทำนอกล็อกตามปกติ (ไม่ต้องให้ใครรอ) — ถ้าสร้างข้อความหรือส่งไม่สำเร็จจริง ๆ ค่อยคืนสิทธิ์
     # ใน except ให้ข้อความถัดไปของเช้านั้นลองทักใหม่ได้ ไม่ใช่เสียสิทธิ์ทักไปทั้งวัน
     claimed = False
+    persisted_claim = False
     today = None
     group_id = None
     try:
@@ -1152,9 +1217,20 @@ def maybe_morning_greeting(event):
         with MORNING_GREETING_LOCK:
             if MORNING_GREETED['date'] == today and MORNING_GREETED['group'] == group_id:
                 return
+            # รอบ 20: เช็กธงถาวรใน Google Sheet ก่อนจองสิทธิ์ — ถ้าวันนี้ทักไปแล้ว (เช่น โปรเซสก่อน
+            # หน้าโดน deploy ทับ) ให้จำลงหน่วยความจำแล้วถอยเลย ไม่ทักซ้ำ การอ่าน/เขียนชีตอยู่ในล็อก
+            # เพราะเป็นส่วนหนึ่งของการจองสิทธิ์ (ยอมให้ข้อความแรกของวันรอนิดหน่อย ดีกว่าปล่อยสองเส้น
+            # แข่งกันอ่านค่าว่างพร้อมกันแบบบั๊กเดิม) ส่วนงานดึงอากาศยังทำนอกล็อกเหมือนเดิม
+            state_ok, persisted_date = read_persisted_greeting(group_id)
+            if state_ok and persisted_date == today:
+                MORNING_GREETED['date'] = today
+                MORNING_GREETED['group'] = group_id
+                return
             MORNING_GREETED['date'] = today
             MORNING_GREETED['group'] = group_id
             claimed = True
+            if state_ok:
+                persisted_claim = write_persisted_greeting(group_id, today)
         lines = ["☀️ สวัสดีตอนเช้าครับทุกคน"]
         for name, lat, lon in WEATHER_CITIES:
             w = fetch_city_weather(name, lat, lon)
@@ -1182,6 +1258,10 @@ def maybe_morning_greeting(event):
                 if MORNING_GREETED['date'] == today and MORNING_GREETED['group'] == group_id:
                     MORNING_GREETED['date'] = None
                     MORNING_GREETED['group'] = None
+            # รอบ 20: คืนสิทธิ์ฝั่งชีตด้วย (เฉพาะกรณีที่รอบนี้เป็นคนเขียนจองเอง) ไม่งั้นธงถาวร
+            # จะค้างเป็นวันนี้ทั้งที่ยังไม่ได้ทักจริง แล้วไม่มีข้อความไหนทักได้อีกเลยทั้งวัน
+            if persisted_claim:
+                write_persisted_greeting(group_id, '')
 
 # ===== รอบ 13: เมนูฟุตบอลไทยลีก 1 แบบ Flex ให้อากง =====
 # ที่มา: อากงชอบดูบอลมาก เชียร์ 2 ทีมคือ อยุธยา ยูไนเต็ด กับ ลำพูน วอริเออร์ — นายออกแบบเอง (31 ต.ค. 2569):
