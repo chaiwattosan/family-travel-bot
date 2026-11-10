@@ -1,5 +1,6 @@
 import os
-# BOT VERSION: 2026-11-06-r22 — รอบ 22 (ลดความรกของกลุ่มในวันงานซ้อน — ฟีดแบ็กอานุก + เคสจริงเช้า 6 พ.ย. 2569: ทักทาย 09:15 list งานครบแล้ว เตือน 30 นาทีของช่างอลูมิเนียมยังยิงซ้ำ 09:30; นายเคาะกรอบ: (1) ถ้าวันนี้ทักทาย + list ทั้งวันไปแล้ว ให้ข้ามเตือนล่วงหน้า 30 นาทีของรายการที่อยู่ใน list — เฉพาะเตือนธรรมดา [30] ของงานทั่วไปเท่านั้น ยกเว้นนัดหาหมอ/ใบนัด (ตัว 30 นาทีคือตัวกำหนดเวลาออกบ้าน) และนัดที่สมาชิกสั่งเตือนไว้ชัดหลายชั้น (2) ถ้าเช้านั้นไม่มีใครทักเลย พอถึงเวลาเตือนแรกของวันให้ "อัปเกรด" push นั้นเป็นทักทาย + list ทั้งวันแทน (push เดียว โควตาเท่าเดิม ไม่เพิ่ม push ทักทายแยก) (3) รายการที่ list ไปแล้วเก็บเป็น event ID ลงชีต bot_state ให้ตัวเตือนเช็กตรงตัว — ดู today_schedule_entries / claim_greeting_state / send_greeting_push และบล็อก "รอบ 22" ใน background_calendar_reminder_worker)
+# BOT VERSION: 2026-11-10-r23 — รอบ 23 (8 เรื่อง: (1) ข้อความยืนยันนัดโชว์เวลาแบบไทยอ่านง่ายแทน ISO ดิบ — เคสนัดช่างตัดต้นไม้ 10 พ.ย. (2) นัดที่คนนอกเข้ามาที่บ้าน (ช่าง/มาส่ง/มาซ่อม...) ไม่ถามเวลาออกบ้าน ยกเว้นเคสเราไปหาเขา — เคสเดียวกัน (3) ข้ามเตือนล่วงหน้า 1 วันของอีเวนต์ที่ทักทายเช้าเล่าไปแล้วในหัวข้อ "พรุ่งนี้ต้องเตรียม" (นายเคาะ 9 พ.ย. — เคสไฟล์ท SL507 ถูก push ซ้ำ) วันไหนไม่มีทักทายยังยิงเป็นตาข่ายสำรอง ยกเว้นนัดหาหมอเด็ดขาด (4) ชุดหน้าหนาว: ทักทายแนบพยากรณ์พรุ่งนี้/มะรืนนี้ + ถามเป็นช่วงวันตอบรายวัน 7 วันพร้อมบรรทัด "วันแห้งสุด" + แนบ ≈AQI ต่อท้ายค่า PM2.5 ให้เทียบข่าว/เครื่องฟอกได้ (5) กันคำขอบใจสลับฝั่ง "ขอบใจที่เตือน" ในคำตอบ AI — ไม่พบในเทมเพลตโค้ด สั่งห้ามใน prompt + ตัวกรองโค้ดตัดประโยคทิ้ง (เคส 8 พ.ย.) (6) โหมดนัดส่วนตัว: summary มี "(ของนาย)" หรือ description มี [personal] → เตือน push ตรงหา ADMIN_USER_ID ไม่เข้ากลุ่ม — เคสนัดประชุมกรรมการหมู่บ้าน 10 พ.ย. (7) ตรวจจับการเลื่อนนัดจากข้อความกลุ่มที่ไม่ได้ @ บอท: ประตูคำเลื่อน + จับคู่อีเวนต์ 7 วัน + เสนอร่างในกลุ่ม ลงมือ patch เมื่อมีคนพิมพ์ "ตกลง" เท่านั้น ห้ามลบ/ห้ามสร้างอีเวนต์ใหม่ — เคสอาหนุ่ยแจ้งเลื่อนช่างตัดต้นไม้ 10 พ.ย. (8) push แรกของวันก่อน 10:00 อัปเกรดเป็นทักทายเต็มรูปแบบ (ทักทาย+อากาศ+list) แทนหัวข้อเตือน+list — เคส push เตือนไฟล์ท 07:30 วันที่ 10 พ.ย.)
+# (ประวัติรอบ 22: 2026-11-06-r22 — รอบ 22 (ลดความรกของกลุ่มในวันงานซ้อน — ฟีดแบ็กอานุก + เคสจริงเช้า 6 พ.ย. 2569: ทักทาย 09:15 list งานครบแล้ว เตือน 30 นาทีของช่างอลูมิเนียมยังยิงซ้ำ 09:30; นายเคาะกรอบ: (1) ถ้าวันนี้ทักทาย + list ทั้งวันไปแล้ว ให้ข้ามเตือนล่วงหน้า 30 นาทีของรายการที่อยู่ใน list — เฉพาะเตือนธรรมดา [30] ของงานทั่วไปเท่านั้น ยกเว้นนัดหาหมอ/ใบนัด (ตัว 30 นาทีคือตัวกำหนดเวลาออกบ้าน) และนัดที่สมาชิกสั่งเตือนไว้ชัดหลายชั้น (2) ถ้าเช้านั้นไม่มีใครทักเลย พอถึงเวลาเตือนแรกของวันให้ "อัปเกรด" push นั้นเป็นทักทาย + list ทั้งวันแทน (push เดียว โควตาเท่าเดิม ไม่เพิ่ม push ทักทายแยก) (3) รายการที่ list ไปแล้วเก็บเป็น event ID ลงชีต bot_state ให้ตัวเตือนเช็กตรงตัว — ดู today_schedule_entries / claim_greeting_state / send_greeting_push และบล็อก "รอบ 22" ใน background_calendar_reminder_worker))
 # (ประวัติรอบ 21: 2026-11-06-r21 — รอบ 21 (2 เรื่องจากเคสจริงเช้า 6 พ.ย. 2569: (1) "ล้อหมุน" — อาหนุ่ยพิมพ์บอกเวลาออกบ้านมาในข้อความสั่งนัดเดียวกันแล้ว ("ล้อหมุน 9.50 น.") แต่บอทยังถาม "ออกบ้านกี่โมง" ซ้ำจนไม่มีใครตอบ เพราะตัวถามไม่รู้ว่าเวลาเริ่มนัดมาจากคำว่าล้อหมุน; รอบนี้ตรวจคำว่า ล้อหมุน/ออกบ้าน + เวลา ในข้อความต้นทางแบบ deterministic ถ้าเจอให้จดเวลาออกบ้านลงนัดเลย ไม่ถามซ้ำ — ดู extract_stated_departure (2) "ร่างนัดรอบถัดไปจากรายงาน" — อาหนุ่ยรายงานฉีดปลวกเสร็จ + "อีก 4 เดือนมาใส่ซ้ำรอบ 2" โดยไม่ได้สั่งบอท ข้อมูลรอบถัดไปเกือบหายไปกับบทสนทนา; รอบนี้ถ้าข้อความคุยทั่วไปมีสัญญาณ "งานซ้ำ + ระยะห่างรอบ" และวันนี้มีอีเวนต์บริการที่จบไปแล้วให้จับคู่ บอทจะเสนอร่างนัดรอบถัดไปให้สมาชิกพิมพ์ "ลงนัด" ยืนยันก่อนเสมอ ไม่ลงเองเงียบ ๆ — ร่างเก็บในชีต bot_state (รอดข้ามรีสตาร์ต) หมดอายุเที่ยงคืน — ดู handle_followup_report)
 # (ประวัติรอบ 20: 2026-11-06-r20 — รอบ 20 (เก็บธง "ทักทายเช้าแล้ว" ลง Google Sheet ให้รอดข้ามการรีสตาร์ต: เคสจริงเช้า 6 พ.ย. 2569 ทักทายออก 2 รอบในวันเดียว — รอบแรก 07:25 จากการทดสอบหลัง deploy r18, รอบสอง 09:15 ตอนสมาชิกส่งข้อความแรกหลังมีการ deploy r19 ตอน 07:55 เพราะธงเดิมเป็นตัวแปรในหน่วยความจำ รีสตาร์ตแล้วหายหมด; รอบนี้เช็ก/จองสิทธิ์ในชีต "bot_state" ของสเปรดชีตเล่มเดิมก่อนทัก อ่าน/เขียนชีตไม่ได้ให้ถอยไปใช้ธงหน่วยความจำแบบรอบ 18 — ดู read_persisted_greeting / write_persisted_greeting และ maybe_morning_greeting)
 # (ประวัติรอบ 19: 2026-11-06-r19 — รอบ 19 (ชิมลาง "ยิงเตือนตรงหาคนที่รับผิดชอบ" เพื่อประหยัดโควตา push: ตัวเลขจริงจาก OA Manager 6 พ.ย. 2569 ใช้ push ไป 70/300 ใน 5 วันแรกทั้งที่ยิงจริงแค่ ~7 ครั้ง เพราะ LINE นับ push เข้ากลุ่มตามจำนวนคนรับ (กลุ่ม 11 คนรวมบอท = คนรับ 10 → ครั้งละ 10 โควตา) เปิดไฟอย่างเดียว 30 วัน = 300 = โควตาทั้งเดือน; รอบนี้เฉพาะอีเวนต์ "เปิดไฟ" (งานประจำของอากง) จะยิงตรงหาผู้รับผิดชอบจาก env LIGHT_REMINDER_USER_ID (นับ 1/ครั้ง) ยิงตรงไม่ผ่านให้ถอยไปยิงกลุ่มตามเดิมในรอบเดียวกัน ส่วนเรื่องรวมของทั้งบ้านยังยิงเข้ากลุ่มเหมือนเดิม — ดู DIRECT_REMINDER_ROUTES ท้ายไฟล์ส่วนตัวเตือน)
@@ -451,12 +452,27 @@ DEPARTURE_QUESTION = ("🚗 นัดนี้ออกบ้านกันก�
                       "บอทจะจดลงนัดให้ทุกคนเห็นครับ")
 STAY_HOME_KEYWORDS = ['ทานยา', 'กินยา', 'เข้านอน', 'เปิดไฟ', 'ปิดไฟ', 'ออกกำลังกาย']
 
+# รอบ 23 ข้อ 2 — นัดที่ "คนนอกเป็นฝ่ายเดินทางเข้ามาที่บ้าน" ไม่ต้องถามเวลาออกบ้าน
+# เคสต้นเหตุ: นัด "ช่างมาตัดต้นไม้ใหญ่" ที่บ้านเชียงใหม่ อ. 10 พ.ย. 2569 — บอทถาม "ออกบ้านกี่โมง"
+# ทั้งที่ช่างเป็นฝ่ายเข้ามาหาเรา คนในบ้านไม่ได้ออกไปไหน คำถามเลยกลายเป็นเรื่องน่ารำคาญเปล่า ๆ
+# วิธีแก้แบบ deterministic: เจอคำสัญญาณกลุ่ม "ผู้มาเยือน" = ไม่ถาม แต่มีข้อยกเว้นสำคัญคือ
+# เคส "ไปหาช่างที่ร้าน" — มีคำว่า ช่าง เหมือนกันแต่ทิศการเดินทางกลับด้าน (เราเป็นฝ่ายออกไป)
+# จึงกันด้วยคำนำกลุ่มออกไปข้างนอก (ไปหา/ไปร้าน) ถ้ามีคำกลุ่มนี้ให้ข้ามกฎผู้มาเยือนไปเลย
+VISITOR_COMING_KEYWORDS = ['ช่าง', 'มาตัด', 'มาฉีด', 'มาซ่อม', 'มาส่ง', 'เข้ามา',
+                           'มาที่บ้าน', 'มารับของที่บ้าน']
+GO_OUT_HINTS = ['ไปหา', 'ไปร้าน', 'ไปที่ร้าน']
+
 def should_ask_departure(summary, source_text, recurrence):
     # ไม่ถามกับนัดทำซ้ำ (กิจวัตร) และนัดที่ทำที่บ้าน ไม่ต้อง "ออกบ้าน" ไปไหน
     if recurrence:
         return False
     joined = f"{summary or ''} {source_text or ''}"
     if any(k in joined for k in STAY_HOME_KEYWORDS):
+        return False
+    # รอบ 23 ข้อ 2: คนที่จะเดินทางคือคนนอกที่เข้ามาที่บ้าน ไม่ใช่คนในบ้านออกไป — ไม่ถาม
+    # (เว้นแต่ข้อความชี้ว่าเราเป็นฝ่ายออกไปหาเขา เช่น "ไปหาช่างที่ร้าน" ให้ถามตามปกติ)
+    if not any(g in joined for g in GO_OUT_HINTS) \
+            and any(k in joined for k in VISITOR_COMING_KEYWORDS):
         return False
     return True
 
@@ -697,9 +713,15 @@ def handle_followup_report(event, msg_text, now=None):
                 if link:
                     write_state_value(key, '')
                     LAST_EVENT['scope'] = qa_scope(event)
+                    # รอบ 23 ข้อ 1: โชว์เวลาแบบมนุษย์อ่านง่าย ไม่โชว์ ISO ดิบ (เหตุผลเดียวกับ
+                    # จุดยืนยันนัดหลักด้านล่าง — เคสนัดช่างตัดต้นไม้ 10 พ.ย. 2569)
+                    try:
+                        start_human = fmt_thai_datetime(datetime.fromisoformat(draft['start_time']))
+                    except Exception:
+                        start_human = draft['start_time']
                     return (f"📅 **ลงปฏิทินให้แล้วครับ!**\n"
                             f"📌 หัวข้อ: {draft['summary']}\n"
-                            f"⏰ เริ่ม: {draft['start_time']}\n"
+                            f"⏰ เริ่ม: {start_human}\n"
                             f"(นัดรอบถัดไปจากการรายงานในกลุ่ม ยืนยันโดยสมาชิกแล้ว)")
                 return "❌ ลงปฏิทินไม่สำเร็จครับ ร่างยังอยู่ ลองพิมพ์ \"ลงนัด\" อีกครั้งนะครับ"
             return None  # ข้อความอื่นระหว่างร่างรออยู่ — ไม่เสนอร่างซ้ำ ไม่แย่งบทสนทนา
@@ -735,6 +757,224 @@ def handle_followup_report(event, msg_text, now=None):
             f"เราทำร่างนัดไว้ให้เป็น **{fmt_thai_datetime(nd)}**\n"
             f"ถ้าให้ลงปฏิทิน พิมพ์ \"ลงนัด\" ได้เลยครับ ไม่ต้องการพิมพ์ \"ไม่เอา\" "
             f"(ร่างนี้หมดอายุเที่ยงคืนวันนี้ครับ)")
+
+# ===== รอบ 23 ข้อ 7: ตรวจจับ "การเลื่อนนัด" จากข้อความกลุ่มที่ไม่ได้ @ บอท =====
+# เคสจริง 10 พ.ย. 2569: อาหนุ่ยพิมพ์ในกลุ่มว่าช่างตัดไม้ติดงานอื่น ขอเลื่อนเป็นวันพรุ่งนี้
+# โดย @ อากงกับอานุก ไม่ได้ @ บอท — log ขึ้น "Appointment extract: is_appointment=False"
+# บอทเงียบสนิทและนัด "ช่างมาตัดต้นไม้ใหญ่" ยังค้างอยู่ที่เดิมทั้งที่ทั้งบ้านรู้ว่าเลื่อนแล้ว
+# บทเรียน: ข่าวเลื่อนนัดในบ้านนี้มักเป็นการ "แจ้งให้คนในบ้านฟัง" ไม่ใช่ "คำสั่งถึงบอท"
+# ประตูคำสั่งเข้มแบบเดิมจึงมองไม่เห็นเสมอ ออกแบบตามหลักเดียวกับร่างนัดรอบ 21:
+# "ตรวจจับได้กว้าง แต่ลงมือต้องมีคนยืนยันก่อน" —
+# (1) ประตูคำ deterministic: มีคำเลื่อน/ยกเลิกนัด และไม่ใช่ประโยคคำถาม และไม่ได้ @ บอท
+# (2) จับคู่อีเวนต์ที่จะถึงภายใน 7 วันจากสตริงร่วมที่ยาวพอ — ไม่ match หรือ match หลายตัว = เงียบ
+# (3) สกัดวันเป้าหมาย (พรุ่งนี้/มะรืนนี้/ชื่อวัน/วันที่ N) ไม่เจอ = เงียบ เพราะโฟลว์นี้
+#     "เลื่อนได้อย่างเดียว ห้ามลบอีเวนต์" (คำว่า ยกเลิกนัด ที่ไม่มีวันใหม่จึงไม่เข้าข่าย)
+#     เวลาเป้าหมายไม่ระบุ = ใช้เวลาเดิมของอีเวนต์
+# (4) เสนอร่างในกลุ่มด้วย reply (ไม่กินโควตา push) เก็บร่างลงชีต bot_state หมดอายุ 24 ชม.
+#     ลงมือเมื่อสมาชิกพิมพ์ "ตกลง" เท่านั้น "ไม่เอา" = ทิ้งร่าง
+# (5) การลงมือคือ patch เฉพาะ start/end ของอีเวนต์เดิม — description และแท็ก [remind:...]
+#     ไม่ถูกแตะต้อง ห้ามสร้างอีเวนต์ใหม่จากโฟลว์นี้เด็ดขาด
+
+RESCHEDULE_DRAFT_KEY_PREFIX = "reschedule_draft:"
+RESCHEDULE_WORDS = ['ขอเลื่อน', 'เลื่อนนัด', 'เลื่อนเป็น', 'เลื่อนไป', 'เลื่อน',
+                    'เปลี่ยนเป็น', 'ย้ายนัด', 'ยกเลิกนัด']
+RESCHEDULE_EXCLUDE_SUMMARY = ['เปิดไฟ', 'วันพระ', 'น้ำดื่มมาส่ง']
+RESCHEDULE_WEEKDAY_SHORT = {'จันทร์': 0, 'อังคาร': 1, 'พุธ': 2, 'พฤหัส': 3,
+                             'ศุกร์': 4, 'เสาร์': 5, 'อาทิตย์': 6}
+
+def _longest_common_substring_len(a, b):
+    # ความยาวสตริงร่วมต่อเนื่องที่ยาวที่สุดของสองข้อความ — ใช้จับคู่คีย์เวิร์ดแบบไม่ต้องตัดคำไทย
+    # (ข้อความนัด/ข้อความแชตสั้นทั้งคู่ ต้นทุนการคำนวณจึงไม่มีปัญหา)
+    if not a or not b:
+        return 0
+    prev = [0] * (len(b) + 1)
+    best = 0
+    for i in range(1, len(a) + 1):
+        cur = [0] * (len(b) + 1)
+        for j in range(1, len(b) + 1):
+            if a[i - 1] == b[j - 1]:
+                cur[j] = prev[j - 1] + 1
+                if cur[j] > best:
+                    best = cur[j]
+        prev = cur
+    return best
+
+def match_reschedule_event(text, now):
+    # จับคู่ข้อความเลื่อนนัดกับอีเวนต์ 1 ตัวภายใน 7 วันข้างหน้า (รวมวันนี้ทั้งวัน กันเคสรายงาน
+    # หลังเวลาเริ่มนัดผ่านไปแล้ว) — เกณฑ์สตริงร่วม >= 4 ตัวอักษร: ตั้งใจให้เป็นสัญญาณอ่อน
+    # (เช่น "ช่าง" ในเคสต้นเหตุยาว 4 พอดี) เพราะด่านความปลอดภัยจริงคือ "ร่าง + คนพิมพ์ยืนยัน"
+    # และถ้า match ได้หลายตัว (เช่น มีงานช่างสองงานในสัปดาห์เดียวกัน) ให้เงียบไว้ก่อนเสมอ
+    try:
+        service = get_calendar_service()
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        horizon = day_start + timedelta(days=7)
+        res = service.events().list(
+            calendarId=FAMILY_CALENDAR_ID,
+            timeMin=day_start.isoformat(),
+            timeMax=horizon.isoformat(),
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        flat_text = (text or '').replace(' ', '')
+        hits = []
+        for e in res.get('items', []):
+            summary = (e.get('summary') or '').strip()
+            s = (e.get('start') or {}).get('dateTime')
+            en = (e.get('end') or {}).get('dateTime')
+            if not summary or not s or not en:
+                continue  # ข้ามอีเวนต์ทั้งวัน/ไม่มีเวลา
+            if any(x in summary for x in RESCHEDULE_EXCLUDE_SUMMARY):
+                continue  # งานประจำ/รายการที่ตัวเตือนจัดการแยกอยู่แล้ว ไม่ใช่เรื่องที่จะมีใครเลื่อนในแชต
+            if _longest_common_substring_len(flat_text, summary.replace(' ', '')) >= 4:
+                hits.append({'id': e.get('id'), 'summary': summary,
+                             'start_dt': datetime.fromisoformat(s).astimezone(now.tzinfo),
+                             'end_dt': datetime.fromisoformat(en).astimezone(now.tzinfo)})
+        return hits[0] if len(hits) == 1 else None
+    except Exception as e:
+        print(f"Reschedule match failed: {e}")
+        return None
+
+def parse_reschedule_target_date(text, now):
+    # สกัด "วันเป้าหมาย" ของการเลื่อน → date หรือ None (ห้ามเดา: ไม่เจอสัญญาณชัด = None)
+    t = text or ''
+    if 'มะรืน' in t:
+        return (now + timedelta(days=2)).date()
+    if 'พรุ่งนี้' in t:
+        return (now + timedelta(days=1)).date()
+    m = re.search(r'วันที่\s*(\d{1,2})', t)
+    if m:
+        day = int(m.group(1))
+        if 1 <= day <= 31:
+            try:
+                cand = now.date().replace(day=day)
+            except ValueError:
+                return None
+            if cand < now.date():
+                # วันที่นั้นของเดือนนี้ผ่านไปแล้ว หมายถึงเดือนหน้า
+                y, mo = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
+                try:
+                    cand = cand.replace(year=y, month=mo)
+                except ValueError:
+                    return None
+            return cand
+    wd = parse_weekday_date(t, now)
+    if wd:
+        return wd.date()
+    # ชื่อวันแบบย่อไม่มีคำว่า "วัน" นำ (เช่น "เลื่อนไปพฤหัส") — parse_weekday_date ไม่รู้จัก
+    for name in sorted(RESCHEDULE_WEEKDAY_SHORT, key=len, reverse=True):
+        if name in t:
+            delta = (RESCHEDULE_WEEKDAY_SHORT[name] - now.weekday()) % 7
+            return (now + timedelta(days=delta)).date()
+    return None
+
+def parse_reschedule_target_time(text):
+    # สกัด "เวลาเป้าหมาย" ถ้าข้อความระบุไว้ → (ชม., นาที) หรือ None (None = ใช้เวลาเดิมของนัด)
+    t = text or ''
+    m = re.search(r'(\d{1,2})[:.](\d{2})', t)
+    if m:
+        return int(m.group(1)) % 24, int(m.group(2)) % 60
+    for w in ('โมง', 'ทุ่ม'):
+        idx = t.find(w)
+        if idx >= 0:
+            got = parse_clock_segment(t[max(0, idx - 8): idx + len(w) + 4])
+            if got:
+                return got
+    if 'เที่ยง' in t:
+        return 12, 0
+    return None
+
+def execute_reschedule_draft(key, draft):
+    # ลงมือเลื่อนจริง: patch เฉพาะ start/end ของอีเวนต์เดิม (description/แท็กเตือนคงเดิมทั้งหมด)
+    try:
+        service = get_calendar_service()
+        new_start = datetime.fromisoformat(draft['new_start'])
+        new_end = datetime.fromisoformat(draft['new_end'])
+        service.events().patch(
+            calendarId=FAMILY_CALENDAR_ID,
+            eventId=draft['event_id'],
+            body={'start': {'dateTime': new_start.isoformat(), 'timeZone': 'Asia/Bangkok'},
+                  'end': {'dateTime': new_end.isoformat(), 'timeZone': 'Asia/Bangkok'}},
+        ).execute()
+        write_state_value(key, '')
+        return (f"✅ เลื่อนให้แล้วครับ \"{draft['summary']}\" "
+                f"→ เป็น {fmt_thai_datetime(new_start)} ครับ")
+    except Exception as e:
+        print(f"Reschedule patch failed: {e}")
+        return "❌ เลื่อนนัดไม่สำเร็จครับ ร่างยังอยู่ ลองพิมพ์ \"ตกลง\" อีกครั้งนะครับ"
+
+def handle_reschedule_flow(event, msg_text, addressed_to_bot, now=None):
+    # คืนข้อความตอบกลับ หรือ None ถ้าข้อความนี้ไม่เกี่ยวกับโฟลว์เลื่อนนัด
+    # ลำดับเดียวกับโฟลว์ร่างรอบ 21: (ก) มีร่างรออยู่ → ข้อความนี้อาจเป็นคำยืนยัน/ปฏิเสธ
+    # (ข) ไม่มีร่าง → ข้อความนี้อาจเป็นข่าวเลื่อนนัดที่ควรเสนอร่าง
+    group_id = getattr(event.source, 'group_id', None)
+    if not group_id or (FAMILY_GROUP_ID and group_id != FAMILY_GROUP_ID):
+        return None
+    tz = pytz.timezone('Asia/Bangkok')
+    now = now or datetime.now(tz)
+    key = RESCHEDULE_DRAFT_KEY_PREFIX + group_id
+    ok, raw = read_state_value(key)
+    draft = None
+    if ok and raw:
+        try:
+            draft = json.loads(raw)
+        except Exception:
+            draft = None
+    if draft:
+        try:
+            expires = datetime.fromisoformat(draft['expires']).astimezone(tz)
+        except Exception:
+            expires = None
+        if expires and now <= expires:
+            if is_reject_word(msg_text):
+                write_state_value(key, '')
+                return f"รับทราบครับ ไม่เลื่อน \"{draft['summary']}\" นะครับ ร่างนี้ทิ้งให้แล้วครับ"
+            if normalize_short(msg_text) == 'ตกลง':
+                # ถ้าร่างนัดรอบถัดไป (รอบ 21) ก็รออยู่เหมือนกัน ให้โฟลว์นั้นได้สิทธิ์คำว่า
+                # "ตกลง" ก่อน (มันถูกเรียกทีหลังใน handle_text_message และร่างของมันเกิดจาก
+                # การรายงานงานที่จบแล้วซึ่งเร่งกว่า) — โฟลว์นี้ถอยให้ ไม่แย่งคำยืนยันกัน
+                fok, fraw = read_state_value(FOLLOWUP_DRAFT_KEY_PREFIX + group_id)
+                if fok and fraw:
+                    return None
+                return execute_reschedule_draft(key, draft)
+            return None  # ข้อความอื่นระหว่างร่างรออยู่ — ไม่เสนอร่างซ้ำ ไม่แย่งบทสนทนา
+        write_state_value(key, '')  # ร่างหมดอายุแล้ว — ล้างทิ้งก่อนพิจารณาข้อความนี้ต่อ
+    # (ข) เสนอร่างใหม่: เฉพาะข้อความที่ไม่ได้ @ บอท (ถ้า @ บอทมา ใช้โฟลว์คำสั่งเดิมที่มีอยู่)
+    if addressed_to_bot:
+        return None
+    t = msg_text or ''
+    if not any(w in t for w in RESCHEDULE_WORDS):
+        return None
+    if any(q in t for q in ['ไหม', 'มั้ย', '?', 'เมื่อไหร่', 'หรือยัง']):
+        return None  # ประโยคคำถาม/ชวนคุย ไม่ใช่การแจ้งเลื่อน — กันร่างผีกลางวงคุย
+    match = match_reschedule_event(t, now)
+    if not match:
+        return None
+    target_date = parse_reschedule_target_date(t, now)
+    if not target_date:
+        return None  # ไม่มีวันใหม่ให้เลื่อนไป (เช่น พูดแค่ "ยกเลิกนัด") — โฟลว์นี้ห้ามลบ จึงเงียบ
+    base_start, base_end = match['start_dt'], match['end_dt']
+    new_time = parse_reschedule_target_time(t)
+    hh, mm = new_time if new_time else (base_start.hour, base_start.minute)
+    new_start = base_start.replace(year=target_date.year, month=target_date.month,
+                                   day=target_date.day, hour=hh, minute=mm,
+                                   second=0, microsecond=0)
+    if new_start == base_start:
+        return None  # เลื่อนแล้วเท่าเดิมเป๊ะ = ไม่ใช่การเลื่อนจริง ไม่ต้องเสนอร่างให้รกกลุ่ม
+    new_end = new_start + (base_end - base_start)
+    draft = {
+        'event_id': match['id'],
+        'summary': match['summary'],
+        'old_start': base_start.isoformat(),
+        'new_start': new_start.isoformat(),
+        'new_end': new_end.isoformat(),
+        'expires': (now + timedelta(hours=24)).isoformat(),
+        'from_text': t[:80],
+    }
+    if not write_state_value(key, json.dumps(draft, ensure_ascii=False)):
+        return None  # จำร่างไม่ได้ = ไม่เสนอ (หลักเดียวกับร่างรอบ 21: ร่างที่บอทจำไม่ได้จะกลายเป็นร่างผี)
+    return (f"รับทราบครับ จะเลื่อน \"{match['summary']}\" "
+            f"จาก {fmt_thai_datetime(base_start)} → เป็น {fmt_thai_datetime(new_start)}\n"
+            f"พิมพ์ \"ตกลง\" เพื่อยืนยัน หรือ \"ไม่เอา\" เพื่อยกเลิกครับ (ร่างนี้หมดอายุใน 24 ชม.)")
 
 def parse_calendar_intent(text):
     if not gemini_client:
@@ -1103,6 +1343,25 @@ def direct_reminder_target(summary):
                 return uid
     return None
 
+# ===== รอบ 23 ข้อ 6: โหมด "นัดส่วนตัว" — เตือนยิงตรงหานายคนเดียว ไม่เข้ากลุ่ม =====
+# เคสต้นเหตุ: นัดประชุมกรรมการหมู่บ้าน อ. 10 พ.ย. 2569 13:00 เป็นนัดของนายคนเดียว
+# นายอยากได้เตือนส่วนตัวผ่าน LINE แต่ Bot A เตือนรายอีเวนต์แบบ DM ไม่ได้ (ตัวเตือนยิงเข้ากลุ่ม
+# เป็นหลัก) คืนนั้นเลยต้องใช้วิธีอ้อม: ลงนัดซ้ำในปฏิทินครอบครัวชื่อ "...(ของนาย)" พร้อมแท็ก
+# [remind:60] ให้ตัวเตือนยิงเข้ากลุ่มเป็นสำรองแทน — ทั้งบ้านเห็นนัดส่วนตัวของนายโดยไม่จำเป็น
+# รอบนี้ใช้กลไกยิงตรงของรอบ 19 (direct) กับปลายทาง ADMIN_USER_ID: อีเวนต์ที่มีสัญญาณว่า
+# เป็นของนายคนเดียว — summary มี "(ของนาย)" หรือ description มีแท็ก [personal] —
+# ให้ reminder push ตรงหานาย (นับโควตา 1) ข้ามการยิงกลุ่ม และไม่ถูกกฎข้ามเพราะอยู่ใน
+# list ทักทาย (ข้อ 3/รอบ 22) ตัดทิ้ง เพราะเตือนส่วนตัวคือนัดหมายที่เจ้าตัวขอไว้เองโดยตรง
+def personal_reminder_target(summary, description):
+    """คืน ADMIN_USER_ID ถ้าอีเวนต์นี้เป็นนัดส่วนตัวของนาย (ให้เตือนยิงตรง) ไม่งั้น None"""
+    if '(ของนาย)' in (summary or '') or '[personal]' in (description or ''):
+        return ADMIN_USER_ID
+    return None
+
+def any_direct_target(summary, description):
+    # ปลายทางยิงตรงรวมทุกเส้นทาง (ส่วนตัวของนายมาก่อน แล้วค่อยเส้นทางเฉพาะเรื่องรอบ 19)
+    return personal_reminder_target(summary, description) or direct_reminder_target(summary)
+
 def background_calendar_reminder_worker():
     notified = set()
     # รอบแรกหลัง process เริ่ม/รีสตาร์ต: เช็กทันทีไม่ต้องรอ 60 วิ + เผื่อย้อนหลัง 15 นาที
@@ -1211,10 +1470,26 @@ def background_calendar_reminder_worker():
                         # รอบ 22 (ก): รายการนี้อยู่ใน list ทักทายของวันนี้แล้ว และเป็นเตือนธรรมดา
                         # ของงานทั่วไป → ข้าม ไม่ยิงซ้ำให้รกกลุ่ม (เคสจริง 6 พ.ย. 2569: ทักทาย
                         # 09:15 list งานครบ 2 รายการแล้ว เตือนช่างอลูมิเนียม 09:30 ยังตามมาซ้ำ)
+                        # รอบ 23 ข้อ 6: นัดส่วนตัวของนายไม่อยู่ในกฎข้ามนี้ — เจ้าตัวขอเตือนส่วนตัว
+                        # ไว้เอง เตือนของมันต้องยิงตรงหาเจ้าของเสมอแม้จะอยู่ใน list เช้าแล้วก็ตาม
                         if (FAMILY_GROUP_ID and greeted_today and start_dt.date() == now.date()
+                                and not personal_reminder_target(summary, event.get('description', ''))
                                 and reminder_skippable_by_greeting(event, minutes, offsets)
                                 and event['id'] in listed_ids):
                             print(f"Reminder skipped (already in morning list) for {key}")
+                            notified.add(key)
+                            continue
+
+                        # รอบ 23 ข้อ 3 (นายเคาะ 9 พ.ย. 2569): ขยายกฎข้ามให้ครอบ "เตือนล่วงหน้า
+                        # 1 วัน" ของอีเวนต์ที่ทักทายเช้าวันนี้เล่าไปแล้วในหัวข้อ "พรุ่งนี้ต้องเตรียม"
+                        # (เคสไฟล์ท SL507 — ทักทาย 09:31 list ให้แล้ว push เตือนยังยิงซ้ำ 10:30)
+                        # เงื่อนไขสำคัญ: ข้ามเฉพาะวันที่ "มีทักทายเกิดขึ้นจริง" เท่านั้น (greeted_today)
+                        # วันไหนไม่มีใครทักจนไม่มีทักทาย เตือนล่วงหน้ายังยิงตามปกติเป็นตาข่ายสำรอง
+                        if (FAMILY_GROUP_ID and greeted_today
+                                and start_dt.date() > now.date()
+                                and reminder_1day_skippable_by_greeting(event, minutes, offsets)
+                                and event['id'] in listed_ids):
+                            print(f"Reminder skipped (1-day advance already in morning prep list) for {key}")
                             notified.add(key)
                             continue
 
@@ -1230,7 +1505,7 @@ def background_calendar_reminder_worker():
                         #   เห็นอะไรเลย แล้วเตือนที่เหลือของวันถูกข้ามตามไปด้วย)
                         claim_after_push_ids = None
                         if (FAMILY_GROUP_ID and not greeted_today and start_dt.date() == now.date()
-                                and not direct_reminder_target(summary)):
+                                and not any_direct_target(summary, event.get('description', ''))):
                             if reminder_skippable_by_greeting(event, minutes, offsets):
                                 up_ids = send_greeting_push(now)
                                 if up_ids is not None:
@@ -1240,10 +1515,26 @@ def background_calendar_reminder_worker():
                                         notified.add(key)
                                         continue
                             else:
-                                entry_lines, entry_ids = today_schedule_entries(now)
-                                if entry_lines:
-                                    alert_text += "\n\n📋 วันนี้ทั้งวันครับ\n" + "\n".join(entry_lines)
-                                    claim_after_push_ids = entry_ids
+                                # รอบ 23 ข้อ 8: push แรกของวัน "ในช่วงเช้า" (ก่อน 10:00) ให้เป็น
+                                # ทักทายเต็มรูปแบบ (ทักทาย + อากาศสองเมือง + list วันนี้/พรุ่งนี้)
+                                # แทนหัวข้อ "แจ้งเตือนกำหนดการ!" + list อย่างเดียว — เคสจริง
+                                # 10 พ.ย. 2569: push เตือนไฟล์ท SL507 ตอน 07:30 เป็น push แรกของวัน
+                                # แต่ไม่มีทักทาย/พยากรณ์เลยทั้งที่เป็นเช้าวันใหม่ ครอบครัวได้แค่
+                                # ข้อความเตือนแห้ง ๆ เงื่อนไขกันพลาด: ใช้ทางนี้เฉพาะเมื่ออีเวนต์
+                                # ต้นเหตุอยู่ใน list ของทักทายจริง (ข้อมูลเตือนไม่หาย) ถ้าไม่อยู่
+                                # (เช่น อีเวนต์จบไปแล้วก่อนเช้า) ให้ถอยไปพฤติกรรมเดิมด้านล่าง
+                                morning_full = False
+                                if now.hour < 10:
+                                    g_lines, g_ids = compose_greeting_lines(now)
+                                    if event['id'] in g_ids:
+                                        alert_text = "\n".join(g_lines)
+                                        claim_after_push_ids = g_ids
+                                        morning_full = True
+                                if not morning_full:
+                                    entry_lines, entry_ids = today_schedule_entries(now)
+                                    if entry_lines:
+                                        alert_text += "\n\n📋 วันนี้ทั้งวันครับ\n" + "\n".join(entry_lines)
+                                        claim_after_push_ids = entry_ids
 
                         # ปลายทางปกติ: กลุ่มครอบครัว (หรือแอดมินถ้าไม่ได้ตั้งกลุ่มไว้) — ระบบเหลือ Bot A
                         # ช่องเดียว (ช่องสำรองถูกลบไปแล้ว ดูคอมเมนต์เก็บกวาดรอบ 9 ต้นไฟล์) ถ้าเจอ 429 =
@@ -1255,14 +1546,17 @@ def background_calendar_reminder_worker():
                         # แอดบอทเป็นเพื่อน/บล็อก/เครือข่ายสะดุด) ให้ถอยไปยิงกลุ่มตามเดิมในรอบเดียวกัน
                         # เตือนต้องไม่หายเพราะการทดลองประหยัดโควตา
                         group_target = FAMILY_GROUP_ID or ADMIN_USER_ID
-                        direct_target = direct_reminder_target(summary)
+                        # รอบ 23 ข้อ 6: เส้นทางยิงตรงรวม "นัดส่วนตัวของนาย" ด้วย (ดู
+                        # personal_reminder_target) — log แยกป้าย (personal) ไว้ให้นายตรวจย้อนหลังได้
+                        direct_target = any_direct_target(summary, event.get('description', ''))
+                        is_personal = bool(personal_reminder_target(summary, event.get('description', '')))
                         sent_direct = False
                         group_push_ok = False
                         if direct_target:
                             try:
                                 line_bot_api.push_message(direct_target, TextSendMessage(text=alert_text))
                                 sent_direct = True
-                                print(f"Reminder push sent DIRECT (counts as 1) for {key}")
+                                print(f"Reminder push sent DIRECT{' (personal)' if is_personal else ''} (counts as 1) for {key}")
                             except Exception as e:
                                 print(f"Reminder direct push failed for {key}: {e} - falling back to group")
                         if not sent_direct and group_target:
@@ -1322,6 +1616,29 @@ def pm25_level_text(value):
         return 'เริ่มมีผลต่อสุขภาพ'
     return 'มีผลต่อสุขภาพ'
 
+# รอบ 23 ข้อ 4(ค) — แปลง PM2.5 (µg/m³) เป็น "≈AQI" แบบคร่าว ๆ ไว้เทียบกับข่าว/เครื่องฟอกอากาศ
+# เคสต้นเหตุ: บอทรายงานฝุ่นเป็น µg/m³ ตามเกณฑ์ไทยมาตลอด แต่ข่าวและเครื่องฟอกในบ้านโชว์เป็น AQI
+# ตัวเลขสองสเกลเทียบกันตรง ๆ ไม่ได้จนผู้ใช้ต้องมาถามว่าตกลงอากาศดีหรือแย่ — รอบนี้จึงแนบ ≈AQI
+# ต่อท้ายค่าฝุ่นทุกครั้ง แปลงด้วยการ interpolate เชิงเส้นระหว่างจุดตัดช่วงของ US AQI
+# (12 µg/m³ ≈ AQI 50, 25 ≈ 78, 37.5 ≈ 106, 75 ≈ 161) เกินจุดสุดท้ายให้ยืดเส้นช่วงสุดท้ายต่อ
+# เป็นค่าประมาณเพื่อการเปรียบเทียบเท่านั้น ไม่ใช่ AQI ทางการ (หมายเหตุรอบ 10 ยังยืน: ไม่ใช้ค่า
+# us_aqi ดิบจาก API เพราะเคยไม่สอดคล้องกับ PM2.5 ของตัวเอง)
+PM25_AQI_POINTS = [(0, 0), (12, 50), (25, 78), (37.5, 106), (75, 161)]
+
+def pm25_to_aqi_approx(value):
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    pts = PM25_AQI_POINTS
+    if v <= pts[0][0]:
+        return 0
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        if v <= x2:
+            return round(y1 + (y2 - y1) * (v - x1) / (x2 - x1))
+    (x1, y1), (x2, y2) = pts[-2], pts[-1]
+    return round(y1 + (y2 - y1) * (v - x1) / (x2 - x1))
+
 def fetch_json_url(url, timeout=8):
     # เคสจริงรอบ 12 (31 ต.ค. 2569): Open-Meteo ตอบ 429 ตั้งแต่คำขอแรกของวันบน Render — ไม่ใช่บอทยิงถี่
     # แต่ IP ขาออกของ Render free เป็น IP ร่วมของ datacenter ที่ผู้เช่ารายอื่นใช้โควตาต่อ IP จนเต็ม (บทเรียน
@@ -1360,7 +1677,10 @@ def _weather_from_open_meteo(name, lat, lon):
             pm_values = [v for v in ((aq.get('hourly') or {}).get('pm2_5') or []) if v is not None]
             if pm_values:
                 pm_max = max(pm_values)
-                line += f"\n   ฝุ่น PM2.5 สูงสุด {pm_max:.0f} µg/m³ ({pm25_level_text(pm_max)})"
+                # รอบ 23 ข้อ 4(ค): แนบ ≈AQI ต่อท้ายค่าฝุ่น ให้เทียบกับข่าว/เครื่องฟอกได้เลย
+                aqi_txt = pm25_to_aqi_approx(pm_max)
+                aqi_part = f", ≈AQI {aqi_txt}" if aqi_txt is not None else ""
+                line += f"\n   ฝุ่น PM2.5 สูงสุด {pm_max:.0f} µg/m³ ({pm25_level_text(pm_max)}{aqi_part})"
                 if pm_max > 37.5:
                     line += " 😷 ออกนอกบ้านใส่หน้ากากนะครับ"
         except Exception as e:
@@ -1413,6 +1733,102 @@ def fetch_city_weather(name, lat, lon):
         return cached['text']
     return None
 
+# ===== รอบ 23 ข้อ 4(ก)(ข): พยากรณ์หลายวัน + บรรทัด "วันแห้งสุด" =====
+# ที่มา: ชุดหน้าหนาวที่จอดค้างไว้ตั้งแต่ก่อน r22 — ทักทายเช้าเดิมโชว์อากาศแค่วันนี้วันเดียว
+# ทั้งที่คำถามยอดฮิตของบ้านช่วงหน้าหนาวคือ "ช่วงนี้วันไหนฝนน้อยสุด จะได้วางแผน" บอทตอบไม่ได้
+# รอบนี้เพิ่ม 2 อย่างโดยไม่แตะโครงทักทายเดิม: (ก) ทักทายเช้าเติมบรรทัดย่อ "พรุ่งนี้/มะรืนนี้"
+# ต่อท้ายอากาศวันนี้ของแต่ละเมือง (ข) ถ้าคำถามอากาศเป็น "ช่วงวัน" ให้ตอบรายวัน + แนะนำวันแห้งสุด
+# แหล่งข้อมูล: Open-Meteo แหล่งเดียว (ตัวสำรอง wttr.in โครงข้อมูลรายวันไม่เข้ากับชั้นนี้
+# และอากาศหลายวันไม่ใช่ข้อมูลวิกฤต — ดึงไม่ได้ก็ข้ามเงียบ ๆ ทักทาย/คำตอบวันนี้ยังทำงานเดิม)
+WEATHER_FC_CACHE = {}
+
+def _forecast_day_label(d, idx):
+    if idx == 0:
+        return 'วันนี้'
+    if idx == 1:
+        return 'พรุ่งนี้'
+    if idx == 2:
+        return 'มะรืนนี้'
+    return f"{THAI_WEEKDAYS[d.weekday()].replace('วัน', '')} {d.day}/{d.month}"
+
+def fetch_city_forecast_days(name, lat, lon, days=3):
+    # คืน list ของ {'label', 'tmin', 'tmax', 'rain'} เรียงจากวันนี้ หรือ None ถ้าดึงไม่ได้
+    # แคช 60 นาทีแบบเดียวกับ fetch_city_weather กันยิง API ซ้ำเวลาถามกันหลายคนในเช้าเดียว
+    cache_key = f"{name}:{days}"
+    now = datetime.now(pytz.timezone('Asia/Bangkok'))
+    cached = WEATHER_FC_CACHE.get(cache_key)
+    if cached and (now - cached['ts']) < timedelta(minutes=60):
+        return cached['days']
+    try:
+        fc = fetch_json_url(
+            f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+            f"&timezone=Asia%2FBangkok&forecast_days={days}"
+            f"&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max")
+        daily = fc.get('daily') or {}
+        times = daily.get('time') or []
+        tmaxs = daily.get('temperature_2m_max') or []
+        tmins = daily.get('temperature_2m_min') or []
+        rains = daily.get('precipitation_probability_max') or []
+        out = []
+        for i, t in enumerate(times):
+            if i >= len(tmaxs) or i >= len(tmins) or tmaxs[i] is None or tmins[i] is None:
+                continue
+            d = datetime.fromisoformat(t).date()
+            out.append({'label': _forecast_day_label(d, i), 'date': d,
+                        'tmin': tmins[i], 'tmax': tmaxs[i],
+                        'rain': rains[i] if i < len(rains) else None})
+        if out:
+            WEATHER_FC_CACHE[cache_key] = {'days': out, 'ts': now}
+            return out
+    except Exception as e:
+        print(f"Multiday forecast fetch failed for {name}: {e}")
+    if cached:
+        return cached['days']
+    return None
+
+def fetch_city_forecast_brief(name, lat, lon):
+    # บรรทัดย่อพยากรณ์ "พรุ่งนี้ + มะรืนนี้" สำหรับแนบท้ายอากาศวันนี้ในทักทายเช้า (ข้อ 4ก)
+    # คืน None ถ้าดึงไม่ได้ — ทักทายจะสั้นเท่าเดิม ไม่พัง
+    days = fetch_city_forecast_days(name, lat, lon, days=3)
+    if not days or len(days) < 2:
+        return None
+    parts = []
+    for d in days[1:3]:
+        seg = f"{d['label']} {d['tmin']:.0f}–{d['tmax']:.0f}°C"
+        if d['rain'] is not None:
+            seg += f" ฝน {d['rain']:.0f}%"
+        parts.append(seg)
+    return "   ↳ " + " · ".join(parts)
+
+WEATHER_RANGE_CUES = ('ช่วง', 'สัปดาห์', 'อาทิตย์นี้', 'หลายวัน', 'วันไหน', 'แห้ง', 'ฝนน้อย', 'ไม่ตก')
+
+def is_weather_range_question(text):
+    # ข้อ 4(ข): คำถามอากาศแบบ "ช่วงวัน" — มีคำใบ้ช่วง/การเปรียบเทียบวัน ถึงจะเข้าทางคำตอบรายวัน
+    t = text or ''
+    return any(c in t for c in WEATHER_RANGE_CUES)
+
+def answer_weather_range(text):
+    # ตอบอากาศรายวัน 7 วัน + บรรทัดแนะนำ "วันแห้งสุด" ของแต่ละเมือง (โอกาสฝนต่ำสุด เสมอกันเอาวันที่ใกล้สุด)
+    # คืน None ถ้าดึงข้อมูลไม่ได้เลย ผู้เรียกจะถอยไปตอบแบบวันนี้ตามเดิม
+    asked = [c for c in WEATHER_CITIES if c[0] in text] or WEATHER_CITIES
+    now_str = datetime.now(pytz.timezone('Asia/Bangkok')).strftime('%H:%M')
+    lines = [f"🌤 พยากรณ์ 7 วันข้างหน้า (ข้อมูลเวลา {now_str} น.)"]
+    got = False
+    for cname, clat, clon in asked:
+        days = fetch_city_forecast_days(cname, clat, clon, days=7)
+        if not days:
+            continue
+        got = True
+        lines.append(f"📍 {cname}")
+        for d in days:
+            rain_txt = f"ฝน {d['rain']:.0f}%" if d['rain'] is not None else "ฝน -"
+            lines.append(f"• {d['label']}: {d['tmin']:.0f}–{d['tmax']:.0f}°C · {rain_txt}")
+        with_rain = [d for d in days if d['rain'] is not None]
+        if with_rain:
+            driest = min(with_rain, key=lambda d: d['rain'])
+            lines.append(f"💡 วันแห้งสุดของ{cname}ช่วงนี้: **{driest['label']}** (โอกาสฝน {driest['rain']:.0f}%) ครับ")
+    return "\n".join(lines) if got else None
+
 WEATHER_KEYWORDS = ('อากาศ', 'พยากรณ์', 'ฝุ่น', 'pm2.5', 'PM2.5')
 WEATHER_QUESTION_CUES = ('ไหม', 'มั้ย', 'เท่าไร', 'เท่าไหร่', 'เป็นไง', 'ยังไง', 'กี่องศา', 'ฝนตก', '?', 'เช็ก', 'เช็ค', 'ดูให้', 'บอกหน่อย')
 
@@ -1426,7 +1842,12 @@ def is_weather_question(text):
         return False
     return len(t) <= 10 or any(c in t for c in WEATHER_QUESTION_CUES)
 
-def tomorrow_prep_lines(now):
+def tomorrow_prep_entries(now):
+    # คืน (บรรทัด, event ID ที่แสดงจริง) — รอบ 23 ข้อ 3: เดิมฟังก์ชันนี้คืนแค่บรรทัดข้อความ
+    # ตัวเตือนจึงไม่รู้ว่าอีเวนต์ "พรุ่งนี้" ตัวไหนถูกทักทายเล่าไปแล้วบ้าง ต่างจากหัวข้อวันนี้
+    # ที่มี ID ตั้งแต่รอบ 22 ผลคือเตือนล่วงหน้า 1 วันยังยิงซ้ำได้ (เคสไฟล์ท SL507 ด้านล่าง)
+    # รอบนี้แยกเป็นตัวคืน entries ตามแพตเทิร์น today_schedule_entries/today_schedule_lines
+    # ชื่อเดิม tomorrow_prep_lines ยังอยู่เป็น wrapper ให้โค้ดเดิมเรียกต่อได้
     # หัวข้อ "พรุ่งนี้ต้องเตรียม" ในทักทายเช้า (รอบ 17 — พัฒนาต่อจาก tomorrow_wan_phra_line ของรอบ 14):
     # ที่มาเดิมของวงนี้คือเคส 2 พ.ย. 2569 ที่ push เตือนวันพระล่วงหน้า 1 วันหลุดเงียบ ๆ ทักทายเช้า (reply ฟรี)
     # จึงรับหน้าที่เตือนเตรียมของแทนมาตั้งแต่รอบ 14 — รอบ 17 นายขยายจาก "เฉพาะวันพระ" เป็นรายการเตรียมตัว
@@ -1458,18 +1879,23 @@ def tomorrow_prep_lines(now):
             start_dt = datetime.fromisoformat(start_str).astimezone(now.tzinfo)
             hhmm = start_dt.strftime('%H:%M')
             if 'วันพระ' in summary:
-                items.append("• พรุ่งนี้วันพระ — วันนี้ซื้อดอกไม้/ของไหว้เตรียมไว้ครับ")
+                items.append(("• พรุ่งนี้วันพระ — วันนี้ซื้อดอกไม้/ของไหว้เตรียมไว้ครับ", e.get('id')))
             elif 'น้ำดื่มมาส่ง' in summary:
-                items.append(f"• พรุ่งนี้น้ำดื่มมาส่ง {hhmm} น. — เตรียมถังเปล่าไว้ครับ")
+                items.append((f"• พรุ่งนี้น้ำดื่มมาส่ง {hhmm} น. — เตรียมถังเปล่าไว้ครับ", e.get('id')))
             else:
-                items.append(f"• พรุ่งนี้ {hhmm} น. {summary}")
+                items.append((f"• พรุ่งนี้ {hhmm} น. {summary}", e.get('id')))
+        lines = [line for line, _ in items[:5]]
+        ids = [eid for _, eid in items[:5] if eid]
         if len(items) > 5:
-            extra = len(items) - 5
-            items = items[:5] + [f"• …และอีก {extra} รายการครับ"]
-        return items
+            lines.append(f"• …และอีก {len(items) - 5} รายการครับ")
+        return lines, ids
     except Exception as e:
         print(f"Tomorrow prep check failed: {e}")
-        return []
+        return [], []
+
+def tomorrow_prep_lines(now):
+    # ชื่อเดิมที่โค้ดรอบ 17–22 เรียกใช้ — คืนเฉพาะบรรทัดข้อความ (ID อยู่ที่ tomorrow_prep_entries)
+    return tomorrow_prep_entries(now)[0]
 
 def today_schedule_entries(now):
     # สรุปกำหนดการ "วันนี้" แนบท้ายทักทายเช้า (รอบ 15 — นายเสนอเอง 2 พ.ย. 2569 หลังเห็น log เช้าวันเดียวกัน:
@@ -1538,23 +1964,32 @@ def today_schedule_lines(now):
 def compose_greeting_lines(now):
     # ประกอบข้อความทักทาย (อากาศ + วันนี้ต้องทำ + พรุ่งนี้ต้องเตรียม) ใช้ร่วมกัน 2 ทาง:
     # ทักทายปกติเมื่อมีคนทักเช้า (ตอบกลับ reply) และทักทายสำรองฝั่งตัวเตือน (push รอบ 22)
-    # คืน (บรรทัดข้อความ, event ID ของรายการ "วันนี้ต้องทำ" ที่แสดงจริง — สำหรับบันทึก state รอบ 22)
+    # คืน (บรรทัดข้อความ, event ID ของรายการที่แสดงจริงทั้งหัวข้อ "วันนี้ต้องทำ" และ
+    # "พรุ่งนี้ต้องเตรียม" — สำหรับบันทึก state รอบ 22/23 ตัวเตือนใช้ข้ามเตือนซ้ำทั้งสองแบบ)
     header = "☀️ สวัสดีตอนเช้าครับทุกคน" if now.hour < 12 else "☀️ สวัสดีครับทุกคน"
     lines = [header]
     for name, lat, lon in WEATHER_CITIES:
         w = fetch_city_weather(name, lat, lon)
         if w:
             lines.append(w)
+            # รอบ 23 ข้อ 4(ก): แนบบรรทัดย่อพรุ่งนี้/มะรืนนี้ต่อท้ายอากาศวันนี้ของเมืองนั้น
+            # (ดึงไม่ได้ = ไม่มีบรรทัดนี้ ทักทายสั้นเท่าเดิม โครงทักทายไม่เปลี่ยน)
+            brief = fetch_city_forecast_brief(name, lat, lon)
+            if brief:
+                lines.append(brief)
     # รอบ 15: แนบสรุปกำหนดการวันนี้ — ไม่มีรายการที่ต้องบอก = ไม่เติมหัวข้อเลย ทักทายจะได้สั้นเหมือนเดิม
     sched, listed_ids = today_schedule_entries(now)
     if sched:
         lines.append("📌 วันนี้ต้องทำครับ")
         lines.extend(sched)
     # รอบ 17: แนบหัวข้อ "พรุ่งนี้ต้องเตรียม" — ไม่มีเรื่องต้องเตรียม = ไม่เติมหัวข้อเลยเช่นกัน
-    prep = tomorrow_prep_lines(now)
+    # รอบ 23 ข้อ 3: ID ของรายการหัวข้อนี้รวมเข้า listed_ids ด้วย — ตัวเตือนจะได้ข้าม
+    # "เตือนล่วงหน้า 1 วัน" ของอีเวนต์ที่ทักทายเล่าไปแล้วในหัวข้อนี้ (เคสไฟล์ท SL507)
+    prep, prep_ids = tomorrow_prep_entries(now)
     if prep:
         lines.append("🧺 พรุ่งนี้ต้องเตรียมครับ")
         lines.extend(prep)
+        listed_ids = listed_ids + [i for i in prep_ids if i not in listed_ids]
     return lines, listed_ids
 
 def send_greeting_push(now):
@@ -1585,6 +2020,23 @@ def reminder_skippable_by_greeting(event, minutes, offsets):
     # ยกเว้นเด็ดขาด: (1) เตือนหลายชั้นหรือเวลาเตือนอื่น = สมาชิกสั่งไว้ชัด/ระบบตั้งให้งานสำคัญ
     # (2) นัดหาหมอ/ใบนัด — เตือน 30 นาทีของงานกลุ่มนี้คือตัวกำหนดเวลาออกบ้าน พลาดแล้วมีต้นทุนจริง
     if minutes != 30 or list(offsets) != [30]:
+        return False
+    if is_hospital_appointment(event.get('summary', ''), event.get('description', '')):
+        return False
+    return True
+
+def reminder_1day_skippable_by_greeting(event, minutes, offsets):
+    # รอบ 23 ข้อ 3 — เตือนล่วงหน้า 1 วัน (ชั้น 1440 นาที) ข้ามได้ถ้าอีเวนต์อยู่ในหัวข้อ
+    # "พรุ่งนี้ต้องเตรียม" ของทักทายเช้าวันนี้แล้ว (นายเคาะ 9 พ.ย. 2569)
+    # เคสต้นเหตุ: ไฟล์ท SL507 (10 พ.ย. 10:30) ถูกทักทายเช้า 9 พ.ย. 09:31 list ในหัวข้อ
+    # พรุ่งนี้ต้องเตรียมไปแล้ว แต่ 10:30 วันเดียวกัน push เตือนล่วงหน้า 1 วันยังยิงซ้ำเข้ากลุ่ม
+    # เพราะกฎข้ามของรอบ 22 ครอบเฉพาะเตือน 30 นาที — ครอบครัวเห็นเรื่องเดิมสองรอบในชั่วโมงเดียว
+    # หมายเหตุการตีความ 2 จุด: (1) ไม่บังคับ offsets == [1440] เหมือนกฎ 30 นาที เพราะเคสต้นเหตุ
+    # คือไฟล์ทที่โฟลว์เที่ยวบินตั้งเตือน [1440, 180] ให้เองโดยสมาชิกไม่ได้สั่งชั้นไหนเป็นพิเศษ —
+    # ข้ามเฉพาะ "ชั้น 1440 ที่กำลังจะยิง" ชั้นอื่น (เช่น 180 นาทีก่อนบิน) ยังยิงตามปกติ
+    # (2) ยกเว้นนัดหาหมอ/ใบนัดเด็ดขาด: หัวใจของนัด รพ. คือเตือนล่วงหน้า 1 วันไว้เตรียมตัว/เอกสาร
+    # (หลักรอบ 7) บรรทัดเตรียมในทักทายแทนที่ไม่ได้
+    if minutes < 1440 or minutes % 1440 != 0:
         return False
     if is_hospital_appointment(event.get('summary', ''), event.get('description', '')):
         return False
@@ -2164,6 +2616,7 @@ def answer_schedule_question(text):
 ห้ามคัดออกหรือปฏิเสธด้วยเหตุว่าไม่ตรงประเภทนัด — ถ้ารายการข้างบนมีรายการอยู่ ห้ามตอบว่าไม่มีเด็ดขาด ให้เล่าให้ครบทุกรายการ
 เฉพาะกรณีที่ถามเจาะจงเรื่องใดเรื่องหนึ่ง (เช่น นัดหมอ) แล้วในรายการไม่มีเรื่องนั้นจริง ๆ ถึงตอบว่าไม่มีนัดลักษณะนั้นในช่วงนี้
 {ALIAS_NOTE_FOR_AI} — ถ้าคำถามเอ่ยถึงคนด้วยชื่อใดในกลุ่มเดียวกัน ให้ตอบจากรายการที่ใช้ชื่อใดก็ได้ในกลุ่มนั้น (เช่น ถาม "นัดอากง" ให้รวมรายการที่เขียนว่า เทียนชัย หรือ เชฟเทียน ด้วย)
+สำคัญเรื่องทิศของคำขอบใจ: บอทคือ "ฝ่ายเตือน/ฝ่ายตอบ" เสมอ ห้ามพูดว่า "ขอบใจที่เตือน" หรือ "ขอบคุณที่เตือน" เด็ดขาด เพราะนั่นคือประโยคที่คนพูดกับบอท ไม่ใช่บอทพูดกับคน (เคสจริง 8 พ.ย. 2569: คำตอบในกลุ่มมีประโยคนี้หลุดออกมา คนอ่านแล้วงงว่าใครเตือนใคร)
 ขึ้นต้นคำตอบด้วย 📅 และลงท้ายประโยคด้วย "ครับ"
 """,
                 )
@@ -2173,6 +2626,15 @@ def answer_schedule_question(text):
                     if any(p in ans for p in QA_DENIAL_PHRASES):
                         print(f"Schedule Q&A guard: AI denied despite {len(sel)} event(s) in window, using fallback")
                         break
+                    # รอบ 23 ข้อ 5: ตัวกรองคำขอบใจสลับฝั่ง — ค้นเทมเพลต deterministic ทั้งไฟล์
+                    # แล้วไม่พบประโยค "ขอบใจที่เตือน" ที่ไหนเลย จุดเดียวที่บอทผลิตข้อความอิสระ
+                    # เข้ากลุ่มคือคำตอบ Gemini ตรงนี้ (เคส 8 พ.ย. 2569 16:48) จึงกันซ้ำชั้นที่สอง
+                    # ด้วยโค้ด: ตัดประโยคที่มีคำขอบใจทิศผิดออกก่อนส่งเสมอ แม้ prompt จะสั่งห้ามแล้ว
+                    if 'ขอบใจที่เตือน' in ans or 'ขอบคุณที่เตือน' in ans:
+                        print("Schedule Q&A guard: stripped role-swapped thanks sentence from AI answer")
+                        ans = re.sub(r'[^.!?\n]*ขอบ(ใจ|คุณ)ที่เตือน[^.!?\n]*[.!?]?', '', ans).strip()
+                        if not ans:
+                            break
                     return ans
             except Exception as e:
                 print(f"Schedule Q&A Gemini attempt {attempt+1} error: {e}")
@@ -3013,6 +3475,17 @@ def handle_text_message(event):
         # แต่กำกับเวลาที่ถามไว้ในหัวข้อความ กันสับสนว่าเป็นค่าของรอบเช้า; ระบุชื่อเมืองเดียวก็ตอบเมืองนั้นเมืองเดียว
         # รอบ 17: ถ้าถูก tag มาด้วย แค่มีคำเรื่องอากาศ/ฝุ่นก็ตอบเลย ไม่ต้องมีคำใบ้คำถาม (หลัก tag เดียวกับ QA)
         if not qa_answer and not plan_handled and not travel_handled and not appt_handled and (is_weather_question(msg_text) or (addressed_to_bot and any(k in msg_text for k in WEATHER_KEYWORDS))):
+            # รอบ 23 ข้อ 4(ข): ถามเป็นช่วงวัน → ตอบรายวัน 7 วัน + แนะนำวันแห้งสุดก่อน
+            # (ดึงข้อมูลหลายวันไม่ได้ ค่อยถอยไปตอบแบบวันนี้ตามเดิมข้างล่าง)
+            if is_weather_range_question(msg_text):
+                range_ans = None
+                try:
+                    range_ans = answer_weather_range(msg_text)
+                except Exception as e:
+                    print(f"Weather range answer error: {e}")
+                if range_ans:
+                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=range_ans))
+                    return
             now_str = datetime.now(pytz.timezone('Asia/Bangkok')).strftime('%H:%M')
             asked_cities = [c for c in WEATHER_CITIES if c[0] in msg_text] or WEATHER_CITIES
             wlines = [f"🌤 พยากรณ์ล่าสุด (เวลา {now_str} น.)"]
@@ -3060,6 +3533,19 @@ def handle_text_message(event):
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=departure_reply))
                 return
 
+        # 0.98 ตรวจจับ "การเลื่อนนัด" จากข้อความกลุ่มที่ไม่ได้ @ บอท (รอบ 23 ข้อ 7 —
+        # ดู handle_reschedule_flow) วางไว้ก่อนขั้น 1 เพราะข่าวเลื่อนนัดไม่ใช่คำสั่งสร้างนัด
+        # ถ้าหลุดไปให้ตัวแยกนัด (Gemini) ตีความ อาจกลายเป็นสร้างอีเวนต์ใหม่ซ้ำแทนการเลื่อนตัวเดิม
+        if not qa_answer and not plan_handled and not travel_handled and not appt_handled:
+            try:
+                reschedule_reply = handle_reschedule_flow(event, msg_text, addressed_to_bot)
+            except Exception as e:
+                print(f"Reschedule flow error: {e}")
+                reschedule_reply = None
+            if reschedule_reply:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reschedule_reply))
+                return
+
         # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5 หรือจัดการในข้อ 0.7/0.8)
         cal_intent = None if (qa_answer or plan_handled or travel_handled or appt_handled) else parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
@@ -3086,10 +3572,19 @@ def handle_text_message(event):
                     lead_text = ", ".join(fmt_lead(m) for m in reminder_list)
                     recur_labels = {'DAILY': 'ทุกวัน', 'WEEKLY': 'ทุกสัปดาห์', 'MONTHLY': 'ทุกเดือน', 'YEARLY': 'ทุกปี'}
                     recur_text = f"\n🔁 ทำซ้ำ: {recur_labels.get(recurrence, recurrence)}" if recurrence else ""
+                    # รอบ 23 ข้อ 1: ข้อความยืนยันนัดเดิมโชว์เวลาเริ่มเป็น ISO ดิบตรง ๆ
+                    # เช่น "2026-11-10T09:30:00" — เคสต้นเหตุคือนัดช่างตัดต้นไม้
+                    # อ. 10 พ.ย. 2569 ที่สมาชิกเห็นแล้วอ่านไม่ออกว่านัดวันไหนกี่โมง
+                    # จึงแปลงเป็นรูปแบบไทยอ่านง่ายด้วย helper เดิมของไฟล์ (fmt_thai_datetime)
+                    # แปลงไม่ได้ (รูปแบบเวลาเพี้ยนจาก AI) ให้ถอยไปโชว์ค่าดิบตามเดิม ไม่ให้โฟลว์พัง
+                    try:
+                        start_human = fmt_thai_datetime(datetime.fromisoformat(start_time))
+                    except Exception:
+                        start_human = start_time
                     reply_text = (
                         f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n"
                         f"📌 หัวข้อ: {summary}\n"
-                        f"⏰ เริ่ม: {start_time}\n"
+                        f"⏰ เริ่ม: {start_human}\n"
                         f"🔔 แจ้งเตือนล่วงหน้า: {lead_text}"
                         f"{recur_text}"
                     )
