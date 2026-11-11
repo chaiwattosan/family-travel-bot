@@ -1,5 +1,6 @@
 import os
-# BOT VERSION: 2026-11-10-r24 — รอบ 24: แพตช์เล็กข้อเดียว (คำตอบ "อยู่บ้าน" ต้องปิดโฟลว์คำถามออกบ้าน ไม่เงียบ + นัดถ่ายทอดสดไม่ถามออกบ้านตั้งแต่ต้น) บนฐานรอบ 23 (8 เรื่อง: (1) ข้อความยืนยันนัดโชว์เวลาแบบไทยอ่านง่ายแทน ISO ดิบ — เคสนัดช่างตัดต้นไม้ 10 พ.ย. (2) นัดที่คนนอกเข้ามาที่บ้าน (ช่าง/มาส่ง/มาซ่อม...) ไม่ถามเวลาออกบ้าน ยกเว้นเคสเราไปหาเขา — เคสเดียวกัน (3) ข้ามเตือนล่วงหน้า 1 วันของอีเวนต์ที่ทักทายเช้าเล่าไปแล้วในหัวข้อ "พรุ่งนี้ต้องเตรียม" (นายเคาะ 9 พ.ย. — เคสไฟล์ท SL507 ถูก push ซ้ำ) วันไหนไม่มีทักทายยังยิงเป็นตาข่ายสำรอง ยกเว้นนัดหาหมอเด็ดขาด (4) ชุดหน้าหนาว: ทักทายแนบพยากรณ์พรุ่งนี้/มะรืนนี้ + ถามเป็นช่วงวันตอบรายวัน 7 วันพร้อมบรรทัด "วันแห้งสุด" + แนบ ≈AQI ต่อท้ายค่า PM2.5 ให้เทียบข่าว/เครื่องฟอกได้ (5) กันคำขอบใจสลับฝั่ง "ขอบใจที่เตือน" ในคำตอบ AI — ไม่พบในเทมเพลตโค้ด สั่งห้ามใน prompt + ตัวกรองโค้ดตัดประโยคทิ้ง (เคส 8 พ.ย.) (6) โหมดนัดส่วนตัว: summary มี "(ของนาย)" หรือ description มี [personal] → เตือน push ตรงหา ADMIN_USER_ID ไม่เข้ากลุ่ม — เคสนัดประชุมกรรมการหมู่บ้าน 10 พ.ย. (7) ตรวจจับการเลื่อนนัดจากข้อความกลุ่มที่ไม่ได้ @ บอท: ประตูคำเลื่อน + จับคู่อีเวนต์ 7 วัน + เสนอร่างในกลุ่ม ลงมือ patch เมื่อมีคนพิมพ์ "ตกลง" เท่านั้น ห้ามลบ/ห้ามสร้างอีเวนต์ใหม่ — เคสอาหนุ่ยแจ้งเลื่อนช่างตัดต้นไม้ 10 พ.ย. (8) push แรกของวันก่อน 10:00 อัปเกรดเป็นทักทายเต็มรูปแบบ (ทักทาย+อากาศ+list) แทนหัวข้อเตือน+list — เคส push เตือนไฟล์ท 07:30 วันที่ 10 พ.ย.)
+# BOT VERSION: 2026-11-11-r25 — รอบ 25: 2 เรื่องจากเคสจริงเช้า 11 พ.ย. 2569 บนฐานรอบ 24: (1) แยกการดึงฝุ่น PM2.5 ออกจากการดึงอากาศ + แคชค่าฝุ่นลง bot_state — เคสทักทายเช้า 11 พ.ย. 06:44 น. Open-Meteo ตอบ 429 รัว ๆ (โควตาต่อ IP ของ datacenter ร่วมเต็ม บทเรียนเดิมตั้งแต่รอบ 12) โค้ดเดิมดึงอากาศกับฝุ่นชุดเดียวกันใน _weather_from_open_meteo พอ forecast ล่มทั้งฟังก์ชันคืน None แล้วถอยไป wttr.in ซึ่งไม่มีข้อมูลฝุ่น บรรทัดฝุ่นจึงหายจากทักทายทั้งที่ตัวเลขอุณหภูมิยังอยู่ รอบนี้แยก fetch_pm25_line เป็นอิสระ (คนละ host คนละ try) ต่อบรรทัดฝุ่นเข้ากับอากาศจากแหล่งไหนก็ได้ที่สำเร็จ และแคชค่าฝุ่นล่าสุดลงชีต bot_state แยกตามเมือง — ดึงสดไม่ได้ให้ใช้แคชอายุไม่เกิน 36 ชม. พร้อมป้าย "(ค่าล่าสุดเมื่อ ...)" เก่ากว่านั้นไม่แสดง (2) ด่านกันนัดซ้ำแบบร่างยืนยัน — เคสเช้าเดียวกัน: บอทยิงเตือนล่วงหน้า 1 วันของนัดเดิม "พาอากงไปนัดหมายทางการแพทย์" 12 พ.ย. 09:30 (ในนัดเดิมมีออกบ้าน 07:00 จดอยู่แล้ว) อาหนุ่ยถามอากงในกลุ่มว่า "พรุ่งนี้ล้อหมุน 7.00 น. แม่นก่อครับ" อากงตอบยืนยัน "ล้อหมุน 07.00 12 พย 69 เจาะเลือดครับ" ตัวแยกนัดมองเป็นนัดใหม่ บอทสร้างอีเวนต์ "ล้อหมุนไปเจาะเลือด" 07:00 ซ้ำกับนัดเดิม และยิงเตือนล่วงหน้า 1 วันของอีเวนต์ใหม่เข้ากลุ่มทันที (เผาโควตา push กลุ่ม — เดือนนี้ใช้ไปแล้ว 154/300) ผู้ดูแลลบอีเวนต์ซ้ำออกแล้ว รอบนี้ก่อนสร้างนัดจริงมีด่าน deterministic เช็กอีเวนต์วันเดียวกัน (เวลาออกบ้านตรง/เวลาทับซ้อน/สตริงร่วม ≥4 ตัวอักษร) ถ้าน่าสงสัยว่าซ้ำให้โพสต์ร่างถามก่อนด้วย reply: พิมพ์ "ใช่" = นัดเดียวกัน ไม่สร้างซ้ำ / พิมพ์ "แยก" = คนละนัด สร้างเลย ร่างเก็บใน bot_state หมดอายุ 24 ชม. ตามแพตเทิร์นร่างเลื่อนนัดรอบ 23
+# (ประวัติรอบ 24: 2026-11-10-r24 — แพตช์เล็กข้อเดียว: คำตอบ "อยู่บ้าน" ปิดโฟลว์คำถามออกบ้านไม่เงียบ (เคสอากงตอบ "ดูทีวีที่บ้าน" 10 พ.ย.) + นัดถ่ายทอดสดไม่ถามออกบ้านตั้งแต่ต้น บนฐานรอบ 23 (8 เรื่อง: เวลาแบบไทยในข้อความยืนยันนัด / นัดคนนอกเข้ามาบ้านไม่ถามออกบ้าน / ข้ามเตือน 1 วันที่ทักทายเล่าไปแล้ว / ชุดหน้าหนาว+≈AQI / กันคำขอบใจสลับฝั่ง / โหมดนัดส่วนตัว / ตรวจจับเลื่อนนัดแบบร่างยืนยัน / push แรกของวันอัปเกรดเป็นทักทายเต็ม) — รายละเอียดเคสของแต่ละเรื่องอยู่ในคอมเมนต์ประจำส่วนของโค้ด)
 # (ประวัติรอบ 22: 2026-11-06-r22 — รอบ 22 (ลดความรกของกลุ่มในวันงานซ้อน — ฟีดแบ็กอานุก + เคสจริงเช้า 6 พ.ย. 2569: ทักทาย 09:15 list งานครบแล้ว เตือน 30 นาทีของช่างอลูมิเนียมยังยิงซ้ำ 09:30; นายเคาะกรอบ: (1) ถ้าวันนี้ทักทาย + list ทั้งวันไปแล้ว ให้ข้ามเตือนล่วงหน้า 30 นาทีของรายการที่อยู่ใน list — เฉพาะเตือนธรรมดา [30] ของงานทั่วไปเท่านั้น ยกเว้นนัดหาหมอ/ใบนัด (ตัว 30 นาทีคือตัวกำหนดเวลาออกบ้าน) และนัดที่สมาชิกสั่งเตือนไว้ชัดหลายชั้น (2) ถ้าเช้านั้นไม่มีใครทักเลย พอถึงเวลาเตือนแรกของวันให้ "อัปเกรด" push นั้นเป็นทักทาย + list ทั้งวันแทน (push เดียว โควตาเท่าเดิม ไม่เพิ่ม push ทักทายแยก) (3) รายการที่ list ไปแล้วเก็บเป็น event ID ลงชีต bot_state ให้ตัวเตือนเช็กตรงตัว — ดู today_schedule_entries / claim_greeting_state / send_greeting_push และบล็อก "รอบ 22" ใน background_calendar_reminder_worker))
 # (ประวัติรอบ 21: 2026-11-06-r21 — รอบ 21 (2 เรื่องจากเคสจริงเช้า 6 พ.ย. 2569: (1) "ล้อหมุน" — อาหนุ่ยพิมพ์บอกเวลาออกบ้านมาในข้อความสั่งนัดเดียวกันแล้ว ("ล้อหมุน 9.50 น.") แต่บอทยังถาม "ออกบ้านกี่โมง" ซ้ำจนไม่มีใครตอบ เพราะตัวถามไม่รู้ว่าเวลาเริ่มนัดมาจากคำว่าล้อหมุน; รอบนี้ตรวจคำว่า ล้อหมุน/ออกบ้าน + เวลา ในข้อความต้นทางแบบ deterministic ถ้าเจอให้จดเวลาออกบ้านลงนัดเลย ไม่ถามซ้ำ — ดู extract_stated_departure (2) "ร่างนัดรอบถัดไปจากรายงาน" — อาหนุ่ยรายงานฉีดปลวกเสร็จ + "อีก 4 เดือนมาใส่ซ้ำรอบ 2" โดยไม่ได้สั่งบอท ข้อมูลรอบถัดไปเกือบหายไปกับบทสนทนา; รอบนี้ถ้าข้อความคุยทั่วไปมีสัญญาณ "งานซ้ำ + ระยะห่างรอบ" และวันนี้มีอีเวนต์บริการที่จบไปแล้วให้จับคู่ บอทจะเสนอร่างนัดรอบถัดไปให้สมาชิกพิมพ์ "ลงนัด" ยืนยันก่อนเสมอ ไม่ลงเองเงียบ ๆ — ร่างเก็บในชีต bot_state (รอดข้ามรีสตาร์ต) หมดอายุเที่ยงคืน — ดู handle_followup_report)
 # (ประวัติรอบ 20: 2026-11-06-r20 — รอบ 20 (เก็บธง "ทักทายเช้าแล้ว" ลง Google Sheet ให้รอดข้ามการรีสตาร์ต: เคสจริงเช้า 6 พ.ย. 2569 ทักทายออก 2 รอบในวันเดียว — รอบแรก 07:25 จากการทดสอบหลัง deploy r18, รอบสอง 09:15 ตอนสมาชิกส่งข้อความแรกหลังมีการ deploy r19 ตอน 07:55 เพราะธงเดิมเป็นตัวแปรในหน่วยความจำ รีสตาร์ตแล้วหายหมด; รอบนี้เช็ก/จองสิทธิ์ในชีต "bot_state" ของสเปรดชีตเล่มเดิมก่อนทัก อ่าน/เขียนชีตไม่ได้ให้ถอยไปใช้ธงหน่วยความจำแบบรอบ 18 — ดู read_persisted_greeting / write_persisted_greeting และ maybe_morning_greeting)
@@ -1013,6 +1014,275 @@ def handle_reschedule_flow(event, msg_text, addressed_to_bot, now=None):
             f"จาก {fmt_thai_datetime(base_start)} → เป็น {fmt_thai_datetime(new_start)}\n"
             f"พิมพ์ \"ตกลง\" เพื่อยืนยัน หรือ \"ไม่เอา\" เพื่อยกเลิกครับ (ร่างนี้หมดอายุใน 24 ชม.)")
 
+# ===== รอบ 25 ข้อ 2: ด่านกัน "นัดซ้ำ" ก่อนสร้างนัดจริง (ร่างยืนยัน "ใช่"/"แยก") =====
+# เคสจริงเช้า 11 พ.ย. 2569: บอทยิงเตือนล่วงหน้า 1 วันของนัดเดิม "พาอากงไปนัดหมายทางการแพทย์"
+# พฤ. 12 พ.ย. 09:30 ตามปกติ (ใน description ของนัดเดิมมี "🚗 เวลาออกบ้าน: 07:00 น." จดไว้
+# อยู่แล้ว) อาหนุ่ยเห็นเตือนแล้วถามอากงในกลุ่มว่า "@เชฟเทียน พรุ่งนี้ล้อหมุน 7.00 น.
+# แม่นก่อครับ" อากงตอบยืนยันว่า "ล้อหมุน 07.00 12 พย 69 เจาะเลือดครับ" — เป็นการคุยกัน
+# เรื่อง "นัดเดิม" ล้วน ๆ แต่ตัวแยกนัด (Gemini) มองคำตอบของอากงเป็นนัดใหม่
+# (is_appointment=True) บอทจึงสร้างอีเวนต์ "ล้อหมุนไปเจาะเลือด" 12 พ.ย. 07:00 ซ้ำกับ
+# นัดเดิม แถมยิงเตือนล่วงหน้า 1 วันของอีเวนต์ใหม่เข้ากลุ่มทันที (เผาโควตา push กลุ่ม —
+# เดือนนี้ใช้ไปแล้ว 154/300) ผู้ดูแลต้องลบอีเวนต์ซ้ำออกจากปฏิทินเองในเช้านั้น
+# บทเรียน: ข้อความที่ผ่านประตูตัวแยกนัดมาเป็น "นัดหมาย" ไม่ได้แปลว่าเป็น "นัดใหม่" เสมอไป
+# โดยเฉพาะข้อความที่เกิดจากบทสนทนาต่อเนื่องจากเตือนที่บอทเพิ่งยิงเอง (คนในบ้านแค่นัดแนะ
+# เวลาออกบ้านกัน ไม่ได้สั่งนัดเพิ่ม)
+# ออกแบบตามหลักเดียวกับร่างรอบ 21/23 — "โค้ด deterministic สงสัยได้ แต่ลงมือต้องมีคนยืนยัน":
+# (1) ก่อนสร้างนัดจริง เช็กอีเวนต์ที่มีอยู่ของ "วันเดียวกันเท่านั้น" เข้าเงื่อนไขใดเงื่อนไขหนึ่ง
+#     ถือว่าน่าสงสัยว่าซ้ำ: (ก) เวลาเริ่มนัดใหม่ตรงกับเวลาออกบ้านที่จดไว้ใน description ของ
+#     อีเวนต์เดิม (ข) ช่วงเวลาเริ่ม–จบของนัดใหม่ทับซ้อนกับอีเวนต์เดิม (ค) ชื่อของนัดใหม่มี
+#     สตริงร่วม ≥4 ตัวอักษรกับชื่ออีเวนต์เดิม (วิธีเดียวกับที่รอบ 23 ใช้จับคู่เลื่อนนัด)
+#     ข้ามงานประจำที่ตัวเตือนจัดการแยกอยู่แล้ว (เปิดไฟ/วันพระ/น้ำดื่ม — ชุดเดียวกับรอบ 23)
+# (2) น่าสงสัย → ห้ามสร้าง ให้โพสต์ร่างถามยืนยันเข้ากลุ่มด้วย reply (ไม่ใช้ push กันเผาโควตา
+#     ซ้ำรอยเคสต้นเหตุ): พิมพ์ "ใช่" = นัดเดียวกัน ไม่ต้องสร้างซ้ำ / พิมพ์ "แยก" = คนละนัด
+#     ให้สร้างเลย — จงใจใช้คำยืนยันคนละชุดกับ "ตกลง"/"ไม่เอา" ของร่างรอบ 21/23 กันหลายร่าง
+#     แย่งคำเดียวกัน (รอบ 23 เคยต้องเขียนกฎถอยให้กันมาแล้ว)
+# (3) ร่าง (payload นัดใหม่ครบชุด + อีเวนต์เดิมที่จับคู่ + เวลาหมดอายุ) เก็บลง bot_state
+#     คีย์แยกตามกลุ่ม หมดอายุ 24 ชม. ตามธรรมเนียมร่างของรอบ 23 — ไม่มีใครตอบ ร่างหมดอายุ
+#     ไปเองและไม่มีอะไรถูกสร้าง (ค่าเริ่มต้นปลอดภัย: นัดที่หายเพราะร่างหมดอายุ คนสั่งพิมพ์
+#     สั่งใหม่ได้ แต่นัดซ้ำที่สร้างไปแล้วเผาโควตาและต้องมีคนมาลบทีหลังแบบเคสต้นเหตุ)
+# ขอบเขตที่จงใจไม่ทำ: นัดทำซ้ำ (recurrence) ไม่เข้าด่านนี้ เพราะอีเวนต์แรกของชุดทำซ้ำ
+# เทียบกับอีเวนต์วันเดียวกันแบบตรงตัวไม่ได้และกิจวัตรประจำไม่ใช่นัดที่สมาชิกจะคุยซ้ำแบบเคสนี้
+
+def create_calendar_appointment(event, summary, start_time, reminder_list, recurrence, recurrence_days, source_text):
+    # สร้างนัดจริง + ประกอบข้อความยืนยันที่จะ reply — แยกออกมาจากขั้น 1 ของ
+    # handle_text_message ในรอบ 25 เพราะมีผู้ใช้รายที่สองคือคำตอบ "แยก" ของร่างกันนัดซ้ำ
+    # ซึ่งต้องสร้างนัดจาก payload ในร่างผ่านเส้นทางเดียวกันเป๊ะ ๆ (ข้อความยืนยันโชว์เวลา
+    # แบบมนุษย์ของรอบ 23 ข้อ 1 + กฎ "บอกเวลาออกบ้านมาแล้วจดเลย/ไม่บอกให้ถาม" ของรอบ 21/7)
+    # ถ้าสองเส้นทางแยกกันเขียน ข้อความยืนยันกับพฤติกรรมท้ายนัดจะค่อย ๆ ไม่ตรงกัน
+    # คืน (สำเร็จไหม, ข้อความที่จะ reply) — ล้มเหลวก็คืนข้อความ error ให้ผู้เรียก reply ต่อ
+    res = add_to_calendar(summary, start_time, reminder_list, recurrence, recurrence_days)
+    if not res:
+        return False, "❌ เกิดข้อผิดพลาดในการบันทึกปฏิทิน"
+    LAST_EVENT['scope'] = qa_scope(event)
+
+    def fmt_lead(m):
+        if m >= 1440 and m % 1440 == 0:
+            return f"{m // 1440} วัน"
+        if m >= 60 and m % 60 == 0:
+            return f"{m // 60} ชั่วโมง"
+        return f"{m} นาที"
+    lead_text = ", ".join(fmt_lead(m) for m in reminder_list)
+    recur_labels = {'DAILY': 'ทุกวัน', 'WEEKLY': 'ทุกสัปดาห์', 'MONTHLY': 'ทุกเดือน', 'YEARLY': 'ทุกปี'}
+    recur_text = f"\n🔁 ทำซ้ำ: {recur_labels.get(recurrence, recurrence)}" if recurrence else ""
+    # รอบ 23 ข้อ 1: ข้อความยืนยันนัดเดิมโชว์เวลาเริ่มเป็น ISO ดิบตรง ๆ
+    # เช่น "2026-11-10T09:30:00" — เคสต้นเหตุคือนัดช่างตัดต้นไม้
+    # อ. 10 พ.ย. 2569 ที่สมาชิกเห็นแล้วอ่านไม่ออกว่านัดวันไหนกี่โมง
+    # จึงแปลงเป็นรูปแบบไทยอ่านง่ายด้วย helper เดิมของไฟล์ (fmt_thai_datetime)
+    # แปลงไม่ได้ (รูปแบบเวลาเพี้ยนจาก AI) ให้ถอยไปโชว์ค่าดิบตามเดิม ไม่ให้โฟลว์พัง
+    try:
+        start_human = fmt_thai_datetime(datetime.fromisoformat(start_time))
+    except Exception:
+        start_human = start_time
+    reply_text = (
+        f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n"
+        f"📌 หัวข้อ: {summary}\n"
+        f"⏰ เริ่ม: {start_human}\n"
+        f"🔔 แจ้งเตือนล่วงหน้า: {lead_text}"
+        f"{recur_text}"
+    )
+    stated_dep = extract_stated_departure(source_text)
+    if stated_dep and not recurrence:
+        # รอบ 21: ผู้สั่งบอกเวลาออกบ้านมาในข้อความเดียวกันแล้ว (เช่น "ล้อหมุน 9.50 น.")
+        # ไม่ถามซ้ำ — จดเวลาออกบ้านลงนัดที่เพิ่งสร้างให้เลย (เคสจริง 6 พ.ย. 2569:
+        # บอทถามซ้ำทั้งที่อาหนุ่ยบอกแล้ว จนไม่มีใครตอบคำถามนั้น)
+        hh, mm = stated_dep
+        if LAST_EVENT.get('event_id') and record_departure_on_event(LAST_EVENT['event_id'], hh, mm):
+            reply_text += f"\n🚗 เวลาออกบ้าน: {hh:02d}:{mm:02d} น. (ตามที่แจ้งไว้ในข้อความ จดลงนัดให้แล้วครับ)"
+        elif should_ask_departure(summary, source_text, recurrence):
+            # จดลงนัดไม่สำเร็จ (เช่น ปฏิทินตอบช้า) — กลับไปถามตามโฟลว์เดิมดีกว่าปล่อยเงียบ
+            remember_departure_question(summary, qa_scope(event))
+            reply_text += f"\n{DEPARTURE_QUESTION}"
+    elif should_ask_departure(summary, source_text, recurrence):
+        remember_departure_question(summary, qa_scope(event))
+        reply_text += f"\n{DEPARTURE_QUESTION}"
+    return True, reply_text
+
+DUP_GUARD_DRAFT_KEY_PREFIX = "dup_guard_draft:"
+DUP_GUARD_SAME_WORDS = {'ใช่', 'นัดเดียวกัน'}
+DUP_GUARD_DIFF_WORDS = {'แยก', 'คนละนัด'}
+
+def parse_recorded_departure(description):
+    # อ่านเวลาออกบ้านที่จดไว้ใน description ของอีเวนต์ (รูปแบบ "🚗 เวลาออกบ้าน: HH:MM น."
+    # ที่ record_departure_on_event เขียนให้ทุกโฟลว์) → (ชม., นาที) หรือ None
+    m = re.search(r'เวลาออกบ้าน:\s*(\d{1,2}):(\d{2})', description or '')
+    if not m:
+        return None
+    return int(m.group(1)) % 24, int(m.group(2)) % 60
+
+def fetch_events_on_day(day):
+    # ดึงอีเวนต์แบบมีเวลาของวันนั้นทั้งวัน → list ของ dict (id/summary/start_dt/end_dt/description)
+    # โครงเดียวกับ fetch_recent_service_event (รอบ 21) แต่ระบุวันใดก็ได้และไม่กรองเฉพาะ
+    # อีเวนต์ที่จบแล้ว เพราะด่านนี้ต้องเห็นอีเวนต์ทั้งวันของวันที่นัดใหม่จะลง (รวมที่ยังไม่เริ่ม)
+    try:
+        service = get_calendar_service()
+        tz = pytz.timezone('Asia/Bangkok')
+        day_start = tz.localize(datetime(day.year, day.month, day.day))
+        day_end = day_start + timedelta(days=1)
+        res = service.events().list(
+            calendarId=FAMILY_CALENDAR_ID,
+            timeMin=day_start.isoformat(),
+            timeMax=day_end.isoformat(),
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        out = []
+        for e in res.get('items', []):
+            summary = (e.get('summary') or '').strip()
+            s = (e.get('start') or {}).get('dateTime')
+            en = (e.get('end') or {}).get('dateTime')
+            if not summary or not s or not en:
+                continue  # ข้ามอีเวนต์ทั้งวัน/ไม่มีเวลา เทียบเวลาไม่ได้
+            out.append({'id': e.get('id'), 'summary': summary,
+                        'start_dt': datetime.fromisoformat(s).astimezone(tz),
+                        'end_dt': datetime.fromisoformat(en).astimezone(tz),
+                        'description': e.get('description', '') or ''})
+        return out
+    except Exception as e:
+        print(f"Duplicate guard day-events fetch failed: {e}")
+        return []
+
+def find_suspected_duplicate(summary, start_time, recurrence):
+    # ตัวตัดสินของด่านกันซ้ำ: คืน dict อีเวนต์เดิมที่ "น่าสงสัยว่าซ้ำ" พร้อมเหตุผล
+    # ('departure'/'overlap'/'keyword') และเวลาออกบ้านที่จดไว้ (ถ้ามี) หรือ None
+    # เช็ก (ก)→(ข)→(ค) จากสัญญาณเฉพาะเจาะจงสุดไปกว้างสุด ตัวที่ match ชั้นก่อนชนะ —
+    # ข้อความร่างจะได้ชี้อีเวนต์เดิมตัวที่น่าเป็นตัวเดียวกันที่สุดให้คนตัดสิน
+    if recurrence:
+        return None  # นัดทำซ้ำไม่เข้าด่านนี้ (ดูคอมเมนต์หัวส่วน)
+    tz = pytz.timezone('Asia/Bangkok')
+    try:
+        new_start = tz.localize(datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%S'))
+    except Exception:
+        try:
+            new_start = datetime.fromisoformat(start_time).astimezone(tz)
+        except Exception:
+            return None  # เวลาเพี้ยนจนอ่านไม่ออก — ไม่เดา ปล่อยไหลไปสร้างตามปกติ
+    new_end = new_start + timedelta(hours=1)  # ระยะเวลานัดใหม่ตามค่าเริ่มต้นของ add_to_calendar
+    candidates = [e for e in fetch_events_on_day(new_start.date())
+                  if not any(x in e['summary'] for x in RESCHEDULE_EXCLUDE_SUMMARY)]
+    if not candidates:
+        return None
+    match, reason = None, None
+    # (ก) เวลาเริ่มนัดใหม่ตรงกับเวลาออกบ้านที่จดไว้ของอีเวนต์เดิม — สัญญาณของเคสต้นเหตุเป๊ะ ๆ
+    # (อากงตอบเวลาล้อหมุนของนัดเดิม ตัวแยกนัดเอาเวลานั้นมาเป็นเวลาเริ่มของ "นัดใหม่")
+    for e in candidates:
+        dep = parse_recorded_departure(e['description'])
+        if dep and e['start_dt'].replace(hour=dep[0], minute=dep[1], second=0, microsecond=0) == new_start:
+            match, reason = e, 'departure'
+            break
+    # (ข) ช่วงเวลาของนัดใหม่ทับซ้อนกับอีเวนต์เดิมวันนั้น
+    if match is None:
+        for e in candidates:
+            if new_start < e['end_dt'] and e['start_dt'] < new_end:
+                match, reason = e, 'overlap'
+                break
+    # (ค) ชื่อมีสตริงร่วม ≥4 ตัวอักษร — สัญญาณอ่อนแบบเดียวกับร่างเลื่อนนัดรอบ 23
+    # (ความปลอดภัยจริงอยู่ที่ร่าง + คนพิมพ์ยืนยัน ไม่ใช่ที่เกณฑ์นี้)
+    if match is None:
+        flat_new = (summary or '').replace(' ', '')
+        for e in candidates:
+            if _longest_common_substring_len(flat_new, e['summary'].replace(' ', '')) >= 4:
+                match, reason = e, 'keyword'
+                break
+    if match is None:
+        return None
+    dep = parse_recorded_departure(match['description'])
+    return {'id': match['id'], 'summary': match['summary'],
+            'start_dt': match['start_dt'], 'end_dt': match['end_dt'],
+            'reason': reason,
+            'departure': f"{dep[0]:02d}:{dep[1]:02d}" if dep else None}
+
+def propose_duplicate_draft(event, summary, start_time, reminder_list, recurrence, recurrence_days, source_text, match, now=None):
+    # เก็บร่างลง bot_state แล้วคืนข้อความร่างให้ผู้เรียกส่งด้วย reply — คืน None ถ้าจำร่าง
+    # ไม่ได้ (ชีตเขียนไม่สำเร็จ): ร่างที่บอทจำไม่ได้ห้ามเสนอ เพราะตอนสมาชิกตอบ "ใช่"/"แยก"
+    # บอทจะไม่รู้ว่าพูดถึงนัดไหน กลายเป็นคำตอบลอย ๆ — หลักเดียวกับร่างรอบ 21/23
+    group_id = getattr(event.source, 'group_id', None)
+    if not group_id:
+        return None
+    tz = pytz.timezone('Asia/Bangkok')
+    now = now or datetime.now(tz)
+    draft = {
+        'summary': summary,
+        'start_time': start_time,
+        'reminder_minutes': [int(m) for m in reminder_list],
+        'recurrence': recurrence,
+        'recurrence_days': recurrence_days or [],
+        'existing_id': match['id'],
+        'existing_summary': match['summary'],
+        'existing_start': match['start_dt'].isoformat(),
+        'reason': match['reason'],
+        'expires': (now + timedelta(hours=24)).isoformat(),
+        'from_text': (source_text or '')[:200],
+    }
+    key = DUP_GUARD_DRAFT_KEY_PREFIX + group_id
+    if not write_state_value(key, json.dumps(draft, ensure_ascii=False)):
+        print(f"Duplicate guard: draft store failed for '{summary}' — falling back to direct create")
+        return None
+    print(f"Duplicate guard: suspected '{summary}' ({start_time}) duplicates existing "
+          f"{match['id']} '{match['summary']}' by {match['reason']} — draft posted, no event created")
+    try:
+        new_human = fmt_thai_datetime(datetime.fromisoformat(start_time))
+    except Exception:
+        new_human = start_time
+    dep_part = f" (ออกบ้าน {match['departure']} น.)" if match.get('departure') else ""
+    return (f"⚠️ เดี๋ยวก่อนครับ นัดนี้ดูเหมือนจะซ้ำกับนัดที่มีอยู่แล้วครับ\n"
+            f"📌 นัดใหม่: \"{summary}\" — {new_human}\n"
+            f"📌 นัดเดิม: \"{match['summary']}\" — {fmt_thai_datetime(match['start_dt'])}{dep_part}\n"
+            f"ถ้าเป็นนัดเดียวกัน พิมพ์ \"ใช่\" ครับ บอทจะไม่สร้างซ้ำให้\n"
+            f"ถ้าคนละนัดกัน พิมพ์ \"แยก\" บอทจะสร้างนัดใหม่ให้เลยครับ (ร่างนี้หมดอายุใน 24 ชม.)")
+
+def handle_duplicate_draft_answer(event, msg_text, now=None):
+    # ตัวจัดการคำตอบของร่างกันนัดซ้ำ (เรียกที่ขั้น 0.99 ใน handle_text_message) —
+    # คืนข้อความตอบกลับ หรือ None ถ้าข้อความนี้ไม่ใช่คำตอบของร่างที่ค้างอยู่
+    # รับเฉพาะ "ใช่"/"นัดเดียวกัน" (ทิ้งร่าง ไม่สร้างอะไร) กับ "แยก"/"คนละนัด" (สร้างจาก
+    # payload ในร่างผ่าน create_calendar_appointment เส้นทางเดียวกับนัดปกติ) เท่านั้น
+    # ห้ามแตะ "ตกลง"/"ไม่เอา" ซึ่งเป็นของร่างรอบ 21/23 เด็ดขาด และข้อความอื่นที่เข้ามา
+    # ระหว่างร่างค้างอยู่ให้คืน None ปล่อยไหลไปประมวลผลปกติโดยร่างยังอยู่เหมือนเดิม
+    group_id = getattr(event.source, 'group_id', None)
+    if not group_id or (FAMILY_GROUP_ID and group_id != FAMILY_GROUP_ID):
+        return None
+    tz = pytz.timezone('Asia/Bangkok')
+    now = now or datetime.now(tz)
+    key = DUP_GUARD_DRAFT_KEY_PREFIX + group_id
+    ok, raw = read_state_value(key)
+    if not ok or not raw:
+        return None
+    try:
+        draft = json.loads(raw)
+    except Exception:
+        return None
+    try:
+        expires = datetime.fromisoformat(draft['expires']).astimezone(tz)
+    except Exception:
+        expires = None
+    if not expires or now > expires:
+        # ร่างหมดอายุแล้ว — ล้างทิ้งและคืน None: คำว่า "ใช่"/"แยก" หลังจากนี้คือบทสนทนา
+        # ปกติ ไม่มีความหมายพิเศษอีก (กันเคสคนคุยกันว่า "ใช่" ในเรื่องอื่นแล้วบอทโผล่มาตอบ)
+        write_state_value(key, '')
+        print(f"Duplicate guard: draft expired and cleared (was '{draft.get('summary')}' "
+              f"vs existing {draft.get('existing_id')})")
+        return None
+    n = normalize_short(msg_text)
+    if n in DUP_GUARD_SAME_WORDS:
+        write_state_value(key, '')
+        print(f"Duplicate guard: answered same ('{n}') for '{draft.get('summary')}' "
+              f"vs {draft.get('existing_id')} — nothing created")
+        return (f"รับทราบครับ เป็นนัดเดียวกับ \"{draft.get('existing_summary', 'นัดเดิม')}\" "
+                f"อยู่แล้ว ไม่สร้างซ้ำให้นะครับ")
+    if n in DUP_GUARD_DIFF_WORDS:
+        created, reply_text = create_calendar_appointment(
+            event, draft['summary'], draft['start_time'],
+            draft.get('reminder_minutes') or [30],
+            draft.get('recurrence'), draft.get('recurrence_days') or [],
+            draft.get('from_text', ''))
+        if created:
+            write_state_value(key, '')
+            print(f"Duplicate guard: answered separate ('{n}') — created '{draft.get('summary')}' from draft")
+            return reply_text
+        # สร้างไม่สำเร็จ: เก็บร่างไว้ให้ลองพิมพ์ "แยก" ซ้ำได้ (แบบเดียวกับร่างรอบ 21/23)
+        print(f"Duplicate guard: create-from-draft failed for '{draft.get('summary')}' — draft kept")
+        return "❌ สร้างนัดไม่สำเร็จครับ ร่างยังอยู่ ลองพิมพ์ \"แยก\" อีกครั้งนะครับ"
+    return None
+
 def parse_calendar_intent(text):
     if not gemini_client:
         return None
@@ -1709,19 +1979,10 @@ def _weather_from_open_meteo(name, lat, lon):
             line += f" · โอกาสฝน {rain:.0f}%"
             if rain >= 60:
                 line += " ☔ พกร่มด้วยนะครับ"
-        try:
-            aq = fetch_json_url(f"https://air-quality-api.open-meteo.com/v1/air-quality?{base}&hourly=pm2_5")
-            pm_values = [v for v in ((aq.get('hourly') or {}).get('pm2_5') or []) if v is not None]
-            if pm_values:
-                pm_max = max(pm_values)
-                # รอบ 23 ข้อ 4(ค): แนบ ≈AQI ต่อท้ายค่าฝุ่น ให้เทียบกับข่าว/เครื่องฟอกได้เลย
-                aqi_txt = pm25_to_aqi_approx(pm_max)
-                aqi_part = f", ≈AQI {aqi_txt}" if aqi_txt is not None else ""
-                line += f"\n   ฝุ่น PM2.5 สูงสุด {pm_max:.0f} µg/m³ ({pm25_level_text(pm_max)}{aqi_part})"
-                if pm_max > 37.5:
-                    line += " 😷 ออกนอกบ้านใส่หน้ากากนะครับ"
-        except Exception as e:
-            print(f"Air quality fetch failed for {name}: {e}")
+        # รอบ 25 ข้อ 1: ฟังก์ชันนี้คืนเฉพาะบรรทัดอากาศล้วนแล้ว — บรรทัดฝุ่น PM2.5 ถูกแยก
+        # ไปดึงอิสระใน fetch_pm25_line และต่อท้ายที่ fetch_city_weather แทน (เดิมฝุ่นผูกอยู่
+        # ในฟังก์ชันนี้ พอ forecast ล่มทั้งฟังก์ชันคืน None ฝุ่นตายตามไปด้วยทั้งที่ host ฝุ่น
+        # เป็นคนละตัวกัน — เคสทักทายเช้า 11 พ.ย. 2569 ดูคอมเมนต์หัวส่วนของ fetch_pm25_line)
         return line
     except Exception as e:
         print(f"Weather fetch failed for {name}: {e}")
@@ -1729,7 +1990,9 @@ def _weather_from_open_meteo(name, lat, lon):
 
 def _weather_from_wttr(name, lat, lon):
     # แหล่งสำรอง: wttr.in (คนละโครงสร้างพื้นฐานกับ Open-Meteo โอกาสโดนบล็อกพร้อมกันต่ำ)
-    # ข้อจำกัด: แหล่งนี้ไม่มีข้อมูลฝุ่น — ข้อความสำรองจึงมีเฉพาะอุณหภูมิกับฝน ไม่มีบรรทัด PM2.5
+    # ข้อจำกัด: แหล่งนี้ไม่มีข้อมูลฝุ่นในตัว — แต่ตั้งแต่รอบ 25 บรรทัดฝุ่นไม่ได้ผูกกับแหล่ง
+    # อากาศอีกต่อไป fetch_city_weather จะดึงฝุ่นแยกต่างหากมาต่อท้ายให้ แม้วันที่อากาศ
+    # ต้องมาจาก wttr.in ก็ตาม (เคส 11 พ.ย. 2569 ที่บรรทัดฝุ่นหายไปเฉย ๆ จะไม่เกิดซ้ำ)
     try:
         data = fetch_json_url(f"https://wttr.in/{lat},{lon}?format=j1")
         days = data.get('weather') or []
@@ -1754,15 +2017,90 @@ def _weather_from_wttr(name, lat, lon):
         print(f"wttr.in fetch failed for {name}: {e}")
         return None
 
+# ===== รอบ 25 ข้อ 1: แยกการดึงฝุ่น PM2.5 ออกจากอากาศ + แคชค่าฝุ่นลง bot_state =====
+# เคสจริงเช้า 11 พ.ย. 2569: ทักทาย 06:44 น. วันนั้น Open-Meteo ตอบ 429 รัว ๆ ทั้ง forecast
+# และพยากรณ์หลายวัน (โควตาต่อ IP ของ datacenter ร่วมที่ผู้เช่ารายอื่นใช้จนเต็ม — บทเรียน
+# เดิมตั้งแต่รอบ 12 ไม่ใช่บอทยิงถี่) โค้ดเดิมดึงฝุ่นต่อท้ายอยู่ใน _weather_from_open_meteo
+# ฟังก์ชันเดียวกับอากาศ: พอ forecast ล่ม ฟังก์ชันคืน None ทั้งก้อน บอทถอยไปใช้ wttr.in
+# ซึ่งให้อุณหภูมิ/ฝนได้แต่ไม่มีข้อมูลฝุ่น ผลคือทักทายวันนั้นตัวเลขอุณหภูมิครบ แต่บรรทัดฝุ่น
+# หายไปเฉย ๆ ทั้งที่ฝุ่นคือข้อมูลที่บ้านนี้ถามหามากที่สุดช่วงหน้าหนาว (อาหนุ่ยเตรียมห้อง
+# กันฝุ่น) และ host ฝุ่น (air-quality-api.open-meteo.com) เป็นคนละ host กับ forecast
+# อาจไม่ได้ล่มตามไปด้วยซ้ำ — คนในกลุ่มเริ่มคุยเรื่องอากาศหนาวกันต่อในเช้านั้น และคาดว่า
+# เรื่องฝุ่นจะตามมา เป็นจังหวะที่บอทควรมีตัวเลขให้พอดี
+# ออกแบบ: (1) แยก fetch ฝุ่นเป็นฟังก์ชันอิสระ มี try ของตัวเอง — ล่มฝั่งไหนห้ามพาอีกฝั่งล่ม
+# (2) fetch_city_weather เป็นคนประกอบข้อความ: อากาศจากแหล่งไหนก็ได้ที่สำเร็จ + บรรทัดฝุ่น
+# ต่อท้าย (3) ค่าฝุ่นที่ดึงสำเร็จให้แคชลงชีต bot_state (ที่เก็บ state เดิมของรอบ 20)
+# แยกตามเมืองพร้อมเวลาที่ดึงได้ — ดึงสดไม่สำเร็จและแคชอายุไม่เกิน 36 ชม. ให้แสดงค่าจากแคช
+# พร้อมป้าย "(ค่าล่าสุดเมื่อ ...)" กำกับให้รู้ชัดว่าไม่ใช่ค่าสด เก่ากว่านั้นหรือไม่มีแคชเลย
+# = ไม่แสดงบรรทัดฝุ่น (เงียบแบบเดิม ดีกว่าโชว์ตัวเลขเก่าจนคนเข้าใจผิดว่าวันนี้ฝุ่นหนัก/เบา)
+PM25_CACHE_KEY_PREFIX = "pm25_cache:"
+PM25_CACHE_MAX_AGE = timedelta(hours=36)
+
+def _fetch_pm25_max(lat, lon):
+    # ดึงเฉพาะค่าสูงสุดของ PM2.5 วันนี้จาก Open-Meteo air-quality — คืน float หรือ None
+    # (กลืน error เองและพิมพ์ log ผู้เรียกไม่ต้องมี try ซ้อนอีกชั้น)
+    try:
+        base = f"latitude={lat}&longitude={lon}&timezone=Asia%2FBangkok&forecast_days=1"
+        aq = fetch_json_url(f"https://air-quality-api.open-meteo.com/v1/air-quality?{base}&hourly=pm2_5")
+        pm_values = [v for v in ((aq.get('hourly') or {}).get('pm2_5') or []) if v is not None]
+        return max(pm_values) if pm_values else None
+    except Exception as e:
+        print(f"Air quality fetch failed: {e}")
+        return None
+
+def _format_pm25_line(pm_max, stale_ts=None):
+    # ประกอบบรรทัดฝุ่นรูปแบบเดียวกับที่ทักทายใช้มาตลอด (µg/m³ + ระดับเกณฑ์ไทยจาก
+    # pm25_level_text + ≈AQI ของรอบ 23 ข้อ 4(ค) จาก pm25_to_aqi_approx — ไม่เปลี่ยนเกณฑ์)
+    # stale_ts ไม่เป็น None แปลว่าค่านี้มาจากแคช: ติดป้ายวัน/เวลาที่ดึงได้ไว้ท้ายบรรทัด
+    aqi_txt = pm25_to_aqi_approx(pm_max)
+    aqi_part = f", ≈AQI {aqi_txt}" if aqi_txt is not None else ""
+    line = f"   ฝุ่น PM2.5 สูงสุด {pm_max:.0f} µg/m³ ({pm25_level_text(pm_max)}{aqi_part})"
+    if stale_ts is not None:
+        line += f" (ค่าล่าสุดเมื่อ {stale_ts.strftime('%d/%m %H:%M')} น.)"
+    if pm_max > 37.5:
+        line += " 😷 ออกนอกบ้านใส่หน้ากากนะครับ"
+    return line
+
+def fetch_pm25_line(name, lat, lon):
+    # คืนบรรทัดฝุ่นของเมืองนั้น หรือ None ถ้าไม่มีค่าที่ใช้ได้ (ดึงสดไม่ได้ + แคชไม่มี/เก่าเกิน)
+    # ดึงสดสำเร็จ → เขียนทับแคชใน bot_state ทุกครั้ง (แคชเก็บ "ค่าล่าสุดที่เคยดึงได้จริง"
+    # ไม่ใช่ค่าเฉลี่ย/ค่าประมาณ) ชีตเขียนไม่ได้ก็แค่ข้าม บรรทัดฝุ่นสดยังส่งได้ตามปกติ
+    tz = pytz.timezone('Asia/Bangkok')
+    now = datetime.now(tz)
+    pm_max = _fetch_pm25_max(lat, lon)
+    if pm_max is not None:
+        write_state_value(PM25_CACHE_KEY_PREFIX + name,
+                          json.dumps({'value': pm_max, 'ts': now.isoformat()}, ensure_ascii=False))
+        return _format_pm25_line(pm_max)
+    ok, raw = read_state_value(PM25_CACHE_KEY_PREFIX + name)
+    if ok and raw:
+        try:
+            data = json.loads(raw)
+            ts = datetime.fromisoformat(data['ts']).astimezone(tz)
+            value = float(data['value'])
+            if now - ts <= PM25_CACHE_MAX_AGE:
+                print(f"PM2.5 live fetch failed for {name} — serving bot_state cache from {ts}")
+                return _format_pm25_line(value, stale_ts=ts)
+        except Exception:
+            pass
+    return None
+
 def fetch_city_weather(name, lat, lon):
     # จุดเรียกเดียวของทั้งทักทายเช้าและถามอากาศระหว่างวัน — ชั้นแคช + สลับแหล่ง (รอบ 12 จากเคส 429 บน Render):
     # แคช 60 นาทีทำให้คำถามซ้ำ ๆ ไม่ยิง API เลย และถ้าทุกแหล่งล่มพร้อมกัน ให้ใช้ค่าแคชเก่าของวันนั้นแทนตอบว่าไม่มีข้อมูล
+    # รอบ 25 ข้อ 1: บรรทัดฝุ่นไม่ได้ฝังอยู่ในข้อความของแหล่งอากาศอีก — ดึงแยกผ่าน
+    # fetch_pm25_line แล้วต่อท้ายที่นี่ อากาศจะมาจาก Open-Meteo หรือ wttr.in ก็ได้
+    # บรรทัดฝุ่นเหมือนกัน (และถ้าฝุ่นดึงสดไม่ได้แต่มีแคชใน bot_state ก็ยังได้บรรทัดฝุ่น
+    # พร้อมป้ายเวลา แทนที่จะหายไปทั้งบรรทัดแบบเคส 11 พ.ย. 2569)
     now = datetime.now(pytz.timezone('Asia/Bangkok'))
     cached = WEATHER_CACHE.get(name)
     if cached and (now - cached['ts']) < timedelta(minutes=60):
         return cached['text']
     text = _weather_from_open_meteo(name, lat, lon) or _weather_from_wttr(name, lat, lon)
     if text:
+        dust_line = fetch_pm25_line(name, lat, lon)
+        if dust_line:
+            text = text + "\n" + dust_line
         WEATHER_CACHE[name] = {'text': text, 'ts': now}
         return text
     if cached:
@@ -3583,6 +3921,21 @@ def handle_text_message(event):
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reschedule_reply))
                 return
 
+        # 0.99 คำตอบร่าง "กันนัดซ้ำ" ของรอบ 25 (ดู handle_duplicate_draft_answer) —
+        # วางไว้ก่อนขั้น 1 เพราะคำว่า "ใช่"/"แยก" ต้องถูกตีความในบริบทของร่างที่ค้างอยู่
+        # ก่อนไหลไปตัวแยกนัด/โฟลว์อื่น (คำตอบไม่ใช่คำสั่งสร้างนัด และถ้าหลุดไปถึงตัวแยกนัด
+        # อาจถูกตีความเป็นนัดใหม่อีกตัว) คำยืนยันชุดนี้ไม่ชนกับ "ตกลง"/"ไม่เอา" ของร่าง
+        # รอบ 21/23 ที่ขั้น 0.98/1.5 จัดการอยู่
+        if not qa_answer and not plan_handled and not travel_handled and not appt_handled:
+            try:
+                dup_answer_reply = handle_duplicate_draft_answer(event, msg_text)
+            except Exception as e:
+                print(f"Duplicate guard answer flow error: {e}")
+                dup_answer_reply = None
+            if dup_answer_reply:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=dup_answer_reply))
+                return
+
         # 1. ตรวจสอบนัดหมายปฏิทิน (ข้ามถ้าตอบคำถามไปแล้วในข้อ 0.5 หรือจัดการในข้อ 0.7/0.8)
         cal_intent = None if (qa_answer or plan_handled or travel_handled or appt_handled) else parse_calendar_intent(msg_text)
         if cal_intent and cal_intent.get("is_calendar"):
@@ -3597,51 +3950,23 @@ def handle_text_message(event):
             recurrence_days = cal_intent.get("recurrence_days") or []
 
             if start_time:
-                res = add_to_calendar(summary, start_time, reminder_list, recurrence, recurrence_days)
-                if res:
-                    LAST_EVENT['scope'] = qa_scope(event)
-                    def fmt_lead(m):
-                        if m >= 1440 and m % 1440 == 0:
-                            return f"{m // 1440} วัน"
-                        if m >= 60 and m % 60 == 0:
-                            return f"{m // 60} ชั่วโมง"
-                        return f"{m} นาที"
-                    lead_text = ", ".join(fmt_lead(m) for m in reminder_list)
-                    recur_labels = {'DAILY': 'ทุกวัน', 'WEEKLY': 'ทุกสัปดาห์', 'MONTHLY': 'ทุกเดือน', 'YEARLY': 'ทุกปี'}
-                    recur_text = f"\n🔁 ทำซ้ำ: {recur_labels.get(recurrence, recurrence)}" if recurrence else ""
-                    # รอบ 23 ข้อ 1: ข้อความยืนยันนัดเดิมโชว์เวลาเริ่มเป็น ISO ดิบตรง ๆ
-                    # เช่น "2026-11-10T09:30:00" — เคสต้นเหตุคือนัดช่างตัดต้นไม้
-                    # อ. 10 พ.ย. 2569 ที่สมาชิกเห็นแล้วอ่านไม่ออกว่านัดวันไหนกี่โมง
-                    # จึงแปลงเป็นรูปแบบไทยอ่านง่ายด้วย helper เดิมของไฟล์ (fmt_thai_datetime)
-                    # แปลงไม่ได้ (รูปแบบเวลาเพี้ยนจาก AI) ให้ถอยไปโชว์ค่าดิบตามเดิม ไม่ให้โฟลว์พัง
-                    try:
-                        start_human = fmt_thai_datetime(datetime.fromisoformat(start_time))
-                    except Exception:
-                        start_human = start_time
-                    reply_text = (
-                        f"📅 **บันทึกนัดหมายลงปฏิทินครอบครัวสำเร็จ!**\n"
-                        f"📌 หัวข้อ: {summary}\n"
-                        f"⏰ เริ่ม: {start_human}\n"
-                        f"🔔 แจ้งเตือนล่วงหน้า: {lead_text}"
-                        f"{recur_text}"
-                    )
-                    stated_dep = extract_stated_departure(msg_text)
-                    if stated_dep and not recurrence:
-                        # รอบ 21: ผู้สั่งบอกเวลาออกบ้านมาในข้อความเดียวกันแล้ว (เช่น "ล้อหมุน 9.50 น.")
-                        # ไม่ถามซ้ำ — จดเวลาออกบ้านลงนัดที่เพิ่งสร้างให้เลย (เคสจริง 6 พ.ย. 2569:
-                        # บอทถามซ้ำทั้งที่อาหนุ่ยบอกแล้ว จนไม่มีใครตอบคำถามนั้น)
-                        hh, mm = stated_dep
-                        if LAST_EVENT.get('event_id') and record_departure_on_event(LAST_EVENT['event_id'], hh, mm):
-                            reply_text += f"\n🚗 เวลาออกบ้าน: {hh:02d}:{mm:02d} น. (ตามที่แจ้งไว้ในข้อความ จดลงนัดให้แล้วครับ)"
-                        elif should_ask_departure(summary, msg_text, recurrence):
-                            # จดลงนัดไม่สำเร็จ (เช่น ปฏิทินตอบช้า) — กลับไปถามตามโฟลว์เดิมดีกว่าปล่อยเงียบ
-                            remember_departure_question(summary, qa_scope(event))
-                            reply_text += f"\n{DEPARTURE_QUESTION}"
-                    elif should_ask_departure(summary, msg_text, recurrence):
-                        remember_departure_question(summary, qa_scope(event))
-                        reply_text += f"\n{DEPARTURE_QUESTION}"
-                else:
-                    reply_text = "❌ เกิดข้อผิดพลาดในการบันทึกปฏิทิน"
+                # รอบ 25 ข้อ 2: ด่านกันนัดซ้ำ — ก่อนสร้างจริง เช็กว่านัดใหม่น่าสงสัยว่าซ้ำ
+                # กับอีเวนต์เดิมวันเดียวกันไหม (ดู find_suspected_duplicate — เคสต้นเหตุคือ
+                # อีเวนต์ "ล้อหมุนไปเจาะเลือด" ที่เกิดจากบทสนทนาต่อเนื่องเรื่องนัด รพ. เดิม
+                # เช้า 11 พ.ย. 2569) สงสัย → โพสต์ร่างถามยืนยันก่อน ไม่สร้างอะไรทั้งนั้น
+                # ส่วนการสร้างจริงย้ายไปอยู่ใน create_calendar_appointment เพื่อให้คำตอบ
+                # "แยก" ของร่างสร้างผ่านเส้นทางเดียวกันเป๊ะ ๆ
+                dup_match = find_suspected_duplicate(summary, start_time, recurrence)
+                if dup_match:
+                    draft_reply = propose_duplicate_draft(event, summary, start_time, reminder_list,
+                                                          recurrence, recurrence_days, msg_text, dup_match)
+                    if draft_reply:
+                        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=draft_reply))
+                        return
+                    # เสนอร่างไม่ได้ (เช่น ชีต bot_state เขียนไม่สำเร็จ) — ถอยไปสร้างตามปกติ
+                    # กันนัดของสมาชิกหายเงียบเพราะด่านกันซ้ำเอง
+                _created, reply_text = create_calendar_appointment(event, summary, start_time, reminder_list,
+                                                                   recurrence, recurrence_days, msg_text)
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
                 return
 
