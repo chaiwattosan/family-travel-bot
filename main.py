@@ -2971,6 +2971,10 @@ def is_schedule_question(text):
         return False
     if 'ลอยกระทง' in t and any(c in t for c in QA_QUESTION_CUES + ['ถัดไป', 'ครั้งหน้า', 'รอบหน้า']):
         return True
+    # คำถามวันหยุด (คริสต์มาส/ปีใหม่/สงกรานต์...) — แหล่งข้อมูลคือปฏิทิน
+    # วันหยุดของ Google ไม่ใช่ปฏิทินครอบครัว ดู answer_holiday
+    if match_holiday_keyword(t) and any(c in t for c in QA_QUESTION_CUES + ['ถัดไป', 'ครั้งหน้า', 'รอบหน้า']):
+        return True
     if 'วันพระ' in t and any(c in t for c in QA_QUESTION_CUES + ['ถัดไป', 'ครั้งหน้า', 'รอบหน้า']):
         return True
     if ('นัด' in t or 'ตาราง' in t or 'กำหนดการ' in t or 'แผน' in t) and any(c in t for c in QA_QUESTION_CUES):
@@ -3149,6 +3153,123 @@ def answer_loy_krathong():
     when = "วันนี้เลยครับ" if delta == 0 else ("พรุ่งนี้ครับ" if delta == 1 else f"อีก {delta} วันครับ")
     return f"🪔 วันลอยกระทงคือ {fmt_thai_date(nxt['start'])} — {when}"
 
+# ปฏิทินวันหยุดทางการของ Google (ชื่อ "วันหยุดในไทย" ในบัญชีของนาย) เป็น
+# ปฏิทินสาธารณะ — service account ของบอทอ่านตรงด้วย calendar id นี้ได้เลย
+# ไม่ต้องมีใครแชร์ให้ และข้อมูลครบทั้งปี อัปเดตโดย Google เอง
+HOLIDAYS_CALENDAR_ID = 'th.th#holiday@group.v.calendar.google.com'
+
+# คำที่คนพิมพ์ถาม (ซ้าย) -> คำค้นในชื่ออีเวนต์ของปฏิทินวันหยุด (ขวา)
+# ชื่อทางการบางวันไม่ตรงคำที่คนเรียกกัน เช่น วันแม่ = วันเฉลิมพระชนมพรรษา
+# สมเด็จพระนางเจ้าสิริกิติ์ฯ จึงต้องมีตารางแปลคู่นี้ ส่วน "ปีใหม่" ใช้คำค้น
+# สั้น ๆ เพราะชื่ออีเวนต์ของ Google สะกด "วันขื้นปีใหม่" (ขื้น) — ค้นด้วย
+# "ปีใหม่" รอดทั้งสองสะกด (ตอนแสดงผลค่อยแก้ ขื้น->ขึ้น ให้)
+HOLIDAY_KEYWORDS = [
+    # "คริสมาส" ไม่การันต์คือสะกดที่คนพิมพ์จริง (แคปเทสต์ของนาย 22 พ.ย.
+    # พิมพ์แบบนี้เป๊ะ) — ต้องรับทั้งสองสะกด ไม่งั้นคำถามจริงจะหลุดเงียบ
+    ('คริสมาส', 'คริสต์มาส'),
+    ('คริสต์มาส', 'คริสต์มาส'),
+    ('ปีใหม่', 'ปีใหม่'),
+    ('สงกรานต์', 'สงกรานต์'),
+    ('ตรุษจีน', 'ตรุษจีน'),
+    ('เข้าพรรษา', 'เข้าพรรษา'),
+    ('ออกพรรษา', 'ออกพรรษา'),
+    ('มาฆบูชา', 'มาฆบูชา'),
+    ('วิสาขบูชา', 'วิสาขบูชา'),
+    ('อาสาฬหบูชา', 'อาสาฬหบูชา'),
+    ('วันแม่', 'สิริกิติ์'),
+    ('วันพ่อ', 'ภูมิพลอดุลยเดช'),
+    ('วันเด็ก', 'วันเด็ก'),
+    ('วาเลนไทน์', 'วาเลนไทน์'),
+    ('วันแรงงาน', 'แรงงาน'),
+    ('ฉัตรมงคล', 'ฉัตรมงคล'),
+    ('รัฐธรรมนูญ', 'รัฐธรรมนูญ'),
+    ('วันสิ้นปี', 'สิ้นปี'),
+    ('จักรี', 'จักรี'),
+    ('ปิยมหาราช', 'ปิยมหาราช'),
+]
+
+def match_holiday_keyword(text):
+    # คืน (คำที่คนถาม, คำค้นในชื่ออีเวนต์) ของวันหยุดแรกที่พบในข้อความ
+    for ask, needle in HOLIDAY_KEYWORDS:
+        if ask in text:
+            return ask, needle
+    return None
+
+def fetch_holiday_events():
+    # ดึงอีเวนต์วันหยุดกรอบ 370 วันจากปฏิทินวันหยุดของ Google ตรง ๆ
+    # (ไม่ผ่าน fetch_upcoming_events ที่ผูกกับปฏิทินครอบครัว) — อีเวนต์
+    # วันหยุดเป็นแบบทั้งวัน (start มีแค่วันที่) ต้องประกอบเวลาแบบเดียวกับ
+    # โค้ดลอยกระทงรุ่นแก้ q และ timeMin ต้องเริ่มที่ต้นวันวันนี้ ไม่งั้น
+    # ถามในวันหยุดพอดี อีเวนต์ของวันนี้ (เริ่มเที่ยงคืน) จะหลุดจากผลค้น
+    tz = pytz.timezone('Asia/Bangkok')
+    now = datetime.now(tz)
+    day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    service = get_calendar_service()
+    res = service.events().list(
+        calendarId=HOLIDAYS_CALENDAR_ID,
+        timeMin=day0.isoformat(),
+        timeMax=(now + timedelta(days=370)).isoformat(),
+        singleEvents=True,
+        orderBy='startTime',
+        maxResults=250,
+    ).execute()
+    out = []
+    for e in res.get('items', []):
+        s = (e.get('start') or {}).get('dateTime') or (e.get('start') or {}).get('date')
+        if not s:
+            continue
+        if 'T' in s:
+            start = datetime.fromisoformat(s).astimezone(tz)
+        else:
+            d = datetime.fromisoformat(s).date()
+            start = tz.localize(datetime(d.year, d.month, d.day))
+        out.append({
+            'summary': e.get('summary', 'ไม่มีหัวข้อ'),
+            'start': start,
+            'description': e.get('description', '') or '',
+        })
+    return out
+
+def answer_holiday(text):
+    # ตอบ "วันหยุด X วันไหน" จากปฏิทินวันหยุดในไทยของ Google — เคสจริง
+    # 22 พ.ย. 2569: นายถามต่อจากลอยกระทงว่า "วันคริสมาสวันไหน" กับ
+    # "วันขึ้นปีใหม่วันไหน" แล้วบอทเงียบ เพราะสองวันนี้ไม่อยู่ในปฏิทิน
+    # ครอบครัวเลย นายชี้เองว่าปฏิทินวันหยุดใน Google Calendar ของนายมีครบ
+    # ทั้งปี ให้เชื่อมอันนั้นแทนการฝังตารางวันหยุดตายตัวไว้ในโค้ด
+    # (โค้ดล้วน ไม่ผ่าน AI แบบเดียวกับ answer_loy_krathong)
+    tz = pytz.timezone('Asia/Bangkok')
+    today = datetime.now(tz).date()
+    m = match_holiday_keyword(text)
+    if not m:
+        return None
+    ask, needle = m
+    try:
+        events = fetch_holiday_events()
+    except Exception as e:
+        print(f"Holiday lookup failed: {e}")
+        events = []
+    cands = [e for e in events if needle in e['summary']]
+    if 'อีฟ' in text:
+        # ถามอีฟตรง ๆ (เช่น คริสต์มาสอีฟ) ให้ตอบตัวอีฟ ไม่ใช่ตัววันจริง
+        eve = [e for e in cands if 'อีฟ' in e['summary']]
+        if eve:
+            cands = eve
+    else:
+        # ตัดตัวอีฟ/ตัวชดเชยออกเมื่อมีตัววันจริงอยู่ — ไม่งั้นถามคริสต์มาส
+        # จะได้คำตอบเป็นอีฟ (24 ธ.ค.) เพราะมันมาก่อนวันจริง (25 ธ.ค.)
+        plain = [e for e in cands if 'อีฟ' not in e['summary'] and 'ชดเชย' not in e['summary']]
+        if plain:
+            cands = plain
+    if not cands:
+        return f"ยังไม่มีข้อมูลวัน{ask}ในปฏิทินวันหยุดครับ"
+    nxt = cands[0]
+    # ชื่ออีเวนต์ของ Google สะกด "วันขื้นปีใหม่" — แก้เฉพาะตอนแสดงผล
+    # ไม่ให้คนอ่านคิดว่าบอทพิมพ์ผิดเอง
+    name = nxt['summary'].replace('ขื้น', 'ขึ้น')
+    delta = (nxt['start'].date() - today).days
+    when = "วันนี้เลยครับ" if delta == 0 else ("พรุ่งนี้ครับ" if delta == 1 else f"อีก {delta} วันครับ")
+    return f"🎉 {name}คือ {fmt_thai_date(nxt['start'])} — {when}"
+
 def schedule_window(text, now):
     # แปลงคำระบุช่วงเวลาในคำถามเป็นกรอบ [start, end) ตามขอบเขตปฏิทินจริง
     # (บทเรียน 22 ต.ค.: เดิมไม่มีกิ่ง "เดือนหน้า" คำถามเลยตกไปกรอบ default 14 วัน — นัดปลายเดือนถัดไปหลุดจากคำตอบหมด)
@@ -3236,6 +3357,12 @@ def answer_schedule_question(text):
     # เพราะชื่ออีเวนต์มีคำว่า "วันพระ" ปนอยู่ ("วันพระ (วันลอยกระทง)")
     if 'ลอยกระทง' in text:
         return answer_loy_krathong()
+    # คำถามวันหยุดตอบจากปฏิทินวันหยุดของ Google — แต่ต้องมีคำถามเรื่อง
+    # "วันที่" ชัด ๆ (วันไหน/เมื่อไหร่/วันที่เท่าไหร่) ถึงจะแย่งตอบ ไม่งั้น
+    # คำถามแบบ "ปีใหม่มีนัดอะไรบ้าง" จะโดนตอบวันที่แทนรายการนัด ทั้งที่
+    # เจตนาคือถามนัดรอบวันหยุด ให้ไหลไปทางรายการนัดตามปกติ
+    if match_holiday_keyword(text) and any(c in text for c in ['วันไหน', 'เมื่อไหร่', 'เมื่อไร', 'วันที่เท่าไหร่', 'ตรงกับวัน']):
+        return answer_holiday(text)
     if 'วันพระ' in text:
         return answer_wan_phra(text, events)
     if not events:
@@ -4211,7 +4338,7 @@ def handle_text_message(event):
         elif addressed_to_bot and not msg_text:
             # tag บอทมาเปล่า ๆ ไม่มีข้อความตามหลัง — ตอบเมนูสั้น ๆ ว่าถามอะไรได้บ้าง แทนที่จะเงียบใส่
             qa_answer = "ครับ เรียกบอทได้เลยครับ 🙏 ถามสั้น ๆ ได้เลย เช่น 'วันพระเดือนนี้' 'ตารางวันนี้' 'อากาศวันนี้' หรือพิมพ์ 'ฟุตบอล' เพื่อดูโปรแกรมบอลครับ"
-        elif addressed_to_bot and 'รูป' not in msg_text and not any(v in msg_text for v in QA_CREATE_VERBS + ['ฝากนัด', 'ลงนัด', 'สร้างนัด', 'ทำนัด']) and ('วันพระ' in msg_text or 'ลอยกระทง' in msg_text or any(k in msg_text for k in ('ตาราง', 'กำหนดการ', 'แผน', 'นัด'))):
+        elif addressed_to_bot and 'รูป' not in msg_text and not any(v in msg_text for v in QA_CREATE_VERBS + ['ฝากนัด', 'ลงนัด', 'สร้างนัด', 'ทำนัด']) and ('วันพระ' in msg_text or 'ลอยกระทง' in msg_text or match_holiday_keyword(msg_text) or any(k in msg_text for k in ('ตาราง', 'กำหนดการ', 'แผน', 'นัด'))):
             # รอบ 17: ถูก tag = คุยกับบอทตรง ๆ ไม่ต้องรอคำใบ้คำถาม (เคสอาหนุ่ย 2 พ.ย. 2569 ข้างบน)
             # กันไว้ 2 ชั้น: ข้อความขอสรุป "รูป" มีโฟลว์เฉพาะของมัน (บทเรียน 23 ต.ค.) และคำสั่งสร้างนัด
             # ชัด ๆ ต้องไหลไปโฟลว์สร้างนัดตามเดิม ไม่ใช่โดนแย่งมาตอบเป็นรายการนัด
