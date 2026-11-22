@@ -3115,43 +3115,19 @@ def answer_wan_phra(text, events):
     return f"🙏 {nxt['summary']} ถัดไปคือ {fmt_thai_date(nxt['start'])} — {when}"
 
 def fetch_loy_krathong_events():
-    # ดึงอีเวนต์ "ลอยกระทง" จากปฏิทินครอบครัวแบบเจาะจงด้วยคำค้น (q) ของ Calendar API
-    # — แยกจาก fetch_upcoming_events ปกติที่กรอบแค่ ~30 วัน: วันลอยกระทงมีปีละครั้ง
-    # ถ้าถามล่วงหน้าไกล (เช่น ถามเดือนตุลาคม) กรอบปกติยังมองไม่เห็นอีเวนต์เดือน
-    # พฤศจิกายน ส่วนการดึงยาว 370 วันแบบไม่กรองจะโดนอีเวนต์ประจำวัน (เปิดไฟหน้าบ้าน
-    # ทุกวัน ฯลฯ) ดันจน maxResults หมดก่อนถึงรายการที่อยากได้ ใช้ q กรองที่เซิร์ฟเวอร์
-    # เลยตรงที่สุด
-    tz = pytz.timezone('Asia/Bangkok')
-    now = datetime.now(tz)
-    service = get_calendar_service()
-    res = service.events().list(
-        calendarId=FAMILY_CALENDAR_ID,
-        q='ลอยกระทง',
-        timeMin=now.isoformat(),
-        timeMax=(now + timedelta(days=370)).isoformat(),
-        singleEvents=True,
-        orderBy='startTime',
-        maxResults=10,
-    ).execute()
-    out = []
-    for e in res.get('items', []):
-        s = (e.get('start') or {}).get('dateTime') or (e.get('start') or {}).get('date')
-        if not s:
-            continue
-        if 'T' in s:
-            start = datetime.fromisoformat(s).astimezone(tz)
-        else:
-            # อีเวนต์แบบทั้งวัน (มีแค่วันที่) — ประกอบเป็นเที่ยงคืนเวลาไทยตรง ๆ
-            # ห้ามใช้ astimezone กับ datetime ไม่มีโซน เพราะมันจะตีความตามโซนของ
-            # เครื่องเซิร์ฟเวอร์ (UTC) แล้ววันที่อาจเลื่อนไป 1 วัน
-            d = datetime.fromisoformat(s).date()
-            start = tz.localize(datetime(d.year, d.month, d.day))
-        out.append({
-            'summary': e.get('summary', 'ไม่มีหัวข้อ'),
-            'start': start,
-            'description': e.get('description', '') or '',
-        })
-    return out
+    # ดึงอีเวนต์ "ลอยกระทง" จากปฏิทินครอบครัว: ใช้ fetch_upcoming_events ตัวเดียว
+    # กับงานถาม-ตอบอื่นแต่ขยายกรอบเป็น 370 วัน แล้วกรองชื่อที่มี "ลอยกระทง" เองในโค้ด
+    # — วันลอยกระทงมีปีละครั้ง ถ้าถามล่วงหน้าไกล (เช่น ถามเดือนตุลาคม) กรอบปกติ
+    # ~30 วันยังมองไม่เห็นอีเวนต์เดือนพฤศจิกายน ส่วน max_results=1000 เผื่อไว้กัน
+    # อีเวนต์ประจำวัน (เปิดไฟหน้าบ้านทุกวัน ฯลฯ) ดันรายการจริงหลุด: ทั้งปีมีอีเวนต์
+    # ขยายตัวราว 400–500 รายการ เพดานพันจึงพ้นสบาย
+    # บทเรียนรอบเดียวกัน (เทสต์สด 22 พ.ย. 2569 07:54): รุ่นแรกใช้คำค้น q='ลอยกระทง'
+    # ของ Calendar API หวังให้เซิร์ฟเวอร์กรองให้ ปรากฏว่าค้นไม่เจอสักรายการทั้งที่
+    # อีเวนต์ "วันพระ (วันลอยกระทง)" มีอยู่จริง — ตัวค้นของ Google จับคำแบบทั้งคำ
+    # ไม่ตัดคำภาษาไทยที่เขียนติดกันในชื่ออีเวนต์ งานกรองคำไทยจึงต้องทำเองฝั่งเรา
+    # แบบเดียวกับที่โค้ดทั้งไฟล์ทำมาตลอด (เช่น กรอง 'วันพระ' ใน answer_wan_phra)
+    events = fetch_upcoming_events(days=370, max_results=1000)
+    return [e for e in events if 'ลอยกระทง' in e['summary']]
 
 def answer_loy_krathong():
     # ตอบ "ลอยกระทงวันไหน" ตรง ๆ — เคสจริง 21 พ.ย. 2569 เย็น: นายถามในแชต 1:1 ว่า
