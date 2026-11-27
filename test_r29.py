@@ -44,11 +44,15 @@ class _FakeLineBotApi:
 
 class _FakeHandler:
     def __init__(self, secret=None):
-        pass
+        # hotfix 27 พ.ย. 2569: ต้อง "บันทึก" การลงทะเบียน handler ด้วย — เดิมคืน
+        # identity decorator เฉย ๆ เทสต์เลยมองไม่เห็นว่า decorator ถูกย้ายที่จน
+        # ImageMessage ผูกผิดฟังก์ชัน (บั๊กที่ทำให้เทสต์สด r29 บอทเงียบ) ดูข้อ G ท้ายไฟล์
+        self.registered = []
 
     def add(self, *a, **k):
         # ต้องคืน identity decorator ไม่งั้นฟังก์ชันที่ถูก decorate กลายเป็น MagicMock
         def deco(fn):
+            self.registered.append((a, k, fn))
             return fn
         return deco
 
@@ -81,7 +85,10 @@ for _name in ('MessageEvent', 'TextMessage', 'TextSendMessage', 'ImageMessage',
               'StickerMessage', 'PostbackEvent', 'FlexSendMessage', 'BubbleContainer',
               'BoxComponent', 'TextComponent', 'ButtonComponent', 'PostbackAction',
               'SeparatorComponent'):
-    setattr(_lb_models, _name, _Dummy)
+    # แต่ละชื่อต้องเป็นคลาสแยกกัน (hotfix 27 พ.ย. 2569) — ถ้าใช้ _Dummy ตัวเดียวกันหมด
+    # คีย์ลงทะเบียน handler (MessageEvent, TextMessage) กับ (MessageEvent, ImageMessage)
+    # จะชนกันเป็นคีย์เดียว เทสต์ข้อ G แยกไม่ออกว่าใครผูกกับฟังก์ชันไหน
+    setattr(_lb_models, _name, type(_name, (_Dummy,), {}))
 sys.modules['linebot.models'] = _lb_models
 
 sys.modules['gspread'] = MagicMock()
@@ -248,6 +255,23 @@ _dl = main.event_detail_lines(_desc)
 check('E1 event_detail_lines ได้บรรทัดออกบ้าน + ขั้นตอนแรก',
       len(_dl) == 2 and _dl[0].startswith('🚗') and 'CSC' in _dl[1])
 check('E2 description ว่าง → ไม่มีบรรทัดเสริม', main.event_detail_lines('') == [])
+
+# ---------- ข้อ G (hotfix เทสต์สด 27 พ.ย. 2569): decorator ผูก handler ถูกฟังก์ชัน ----------
+# เคสจริง: r29 แทรกฟังก์ชันช่วยข้อ B คั่นระหว่าง @handler.add(ImageMessage) กับ
+# def handle_image_message → decorator ไปผูกกับ _appt_case_key_match แทน รูปทุกใบ
+# เรียกฟังก์ชันจับคู่เคสด้วย MessageEvent จน AttributeError บอทเงียบทั้งที่เทสต์เดิม
+# 24/24 ผ่าน (stub เดิมไม่บันทึกการลงทะเบียน) — ชุดนี้กันบั๊กซ้ำทั้ง 4 handler
+_reg = {}
+for _a, _k, _fn in main.handler.registered:
+    _reg[(_a, tuple(sorted(_k.items())))] = _fn
+check('G1 ImageMessage → handle_image_message',
+      _reg.get(((main.MessageEvent,), (('message', main.ImageMessage),))) is main.handle_image_message)
+check('G2 TextMessage → handle_text_message',
+      _reg.get(((main.MessageEvent,), (('message', main.TextMessage),))) is main.handle_text_message)
+check('G3 StickerMessage → handle_sticker_message',
+      _reg.get(((main.MessageEvent,), (('message', main.StickerMessage),))) is main.handle_sticker_message)
+check('G4 PostbackEvent → handle_postback',
+      _reg.get(((main.PostbackEvent,), ())) is main.handle_postback)
 
 print()
 if failures:

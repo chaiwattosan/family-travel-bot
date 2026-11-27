@@ -5275,7 +5275,8 @@ def handle_text_message(event):
     except Exception as e:
         print(f"Error handling message: {e}")
 
-@handler.add(MessageEvent, message=ImageMessage)
+# หมายเหตุ: decorator ลงทะเบียน handler รูปภาพอยู่ที่ def handle_image_message ด้านล่างโดยตรง
+# ห้ามแทรก def อื่นคั่นระหว่าง decorator กับ def ของมัน — บทเรียน hotfix เทสต์สด 27 พ.ย. 2569
 # ===== รอบ 29 ข้อ B: รูปหลายใบของนัดเดียวกัน — รวมเข้ากับเคสที่ค้างอยู่ =====
 # เคสจริง 27 พ.ย. 2569 สองรูปแบบ: (ก) ใบนัดคลินิกประสาท 8 ธ.ค. มาพร้อม "ใบขั้นตอน
 # วันนัด" แยกอีกใบ — ระบบเดิมเปิด 2 โฟลว์แข่งกัน (ใบหนึ่งเป็นร่างรอตกลง อีกใบเป็น
@@ -5361,6 +5362,11 @@ def try_merge_pending_appt_image(event, scope, new_appt):
                     "เหลือแค่นัดนี้กี่โมงครับ?")
     return None
 
+# hotfix 27 พ.ย. 2569 (เทสต์สด r29): รอบ 29 แทรกฟังก์ชันช่วยของข้อ B คั่นระหว่าง decorator
+# บรรทัดถัดไปกับ def handle_image_message — Python ผูก decorator กับ "def แรกที่ตามมา"
+# ซึ่งกลายเป็น _appt_case_key_match รูปภาพทุกใบเลยเรียกฟังก์ชันจับคู่เคสด้วย MessageEvent
+# จน AttributeError และบอทเงียบสนิท (log 11:21 น.) กฎ: decorator ต้องติดกับ def ของมันเสมอ
+@handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
     try:
         user_id = event.source.user_id
